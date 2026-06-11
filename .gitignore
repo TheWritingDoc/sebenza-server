@@ -1,0 +1,7 @@
+.env
+uploads/
+downloads/
+*.backup*
+*.log
+node_modules/
+client_build/
