@@ -1,0 +1,121 @@
+
+// Middleware to verify JWT
+  if (!token) return res.status(401).json({ error: 'No token provided' });
+  
+  try {
+    next();
+  } catch (err) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+};
+
+// Get nearby services within radius
+  try {
+    
+    if (!lat || !lng) {
+      return res.status(400).json({ error: 'Latitude and longitude required' });
+    }
+
+
+    // Find all services and calculate distance
+      .populate('providerId', 'name rating verified');
+
+    // Calculate distance for each service and filter by radius
+      
+      if (!serviceLat || !serviceLng) return null;
+
+      // Haversine formula to calculate distance
+                Math.cos(latNum * Math.PI / 180) * Math.cos(serviceLat * Math.PI / 180) *
+                Math.sin(dLng/2) * Math.sin(dLng/2);
+
+      return {
+        ...service.toObject(),
+        distance
+      };
+
+    res.json(nearbyServices);
+  } catch (err) {
+    console.error('Nearby services error:', err);
+    res.status(500).json({ error: 'Server error fetching nearby services' });
+  }
+});
+
+// Get all services
+  try {
+      .populate('providerId', 'name rating verified')
+      .limit(50);
+    res.json(services);
+  } catch (err) {
+    console.error('Get services error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Create Service with images
+  try {
+    
+    // Parse location if it's a string
+      try {
+      } catch (e) {
+        return res.status(400).json({ error: 'Invalid location format' });
+      }
+    }
+
+    // Handle uploaded images
+      url: `/uploads/services/${file.filename}`,
+      caption: '',
+      uploadedAt: new Date()
+    })) : [];
+
+      providerId: req.userId,
+      title,
+      description,
+      category,
+      randAmount: parseFloat(randAmount),
+      location: parsedLocation,
+      images: serviceImages,
+      completedJobsCount: 0,
+      averageRating: 5
+    });
+
+    await service.save();
+    
+    // Populate provider info before returning
+    await service.populate('providerId', 'name rating verified');
+    
+    res.json({ 
+      message: 'Service created successfully', 
+      service,
+      imagesUploaded: serviceImages.length
+    });
+  } catch (err) {
+    console.error('Create service error:', err);
+    res.status(500).json({ error: 'Server error creating service', details: err.message });
+  }
+});
+
+// Get provider's services
+  try {
+      .sort({ createdAt: -1 });
+    res.json(services);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Delete service
+  try {
+      _id: req.params.serviceId,
+      providerId: req.userId
+    });
+    
+    if (!service) {
+      return res.status(404).json({ error: 'Service not found' });
+    }
+    
+    res.json({ message: 'Service deleted' });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+

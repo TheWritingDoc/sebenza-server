@@ -1,0 +1,494 @@
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const path = require('path');
+require('dotenv').config();
+const upload = require('./middleware/upload');
+
+// Import currency configuration
+const currency = require('./config/currency');
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+
+// Flag to track MongoDB connection status
+let useMongoDB = true;
+let mongoConnected = false;
+
+// In-memory storage for demo mode
+const memStorage = {
+  users: [],
+  services: [],
+  transactions: [],
+  notifications: [],
+  userIdCounter: 1,
+  serviceIdCounter: 1,
+  transactionIdCounter: 1
+};
+
+// CORS configuration
+const corsOptions = {
+  origin: [
+    'https://nonrectangularly-hyperaesthetic-dewey.ngrok-free.dev',
+    'http://localhost:3000',
+    'http://localhost:3001'
+  ],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+};
+
+// Middleware
+app.use(cors(corsOptions));
+app.use(express.json());
+app.use('/uploads', express.static('uploads'));
+
+// Serve static files from React build
+app.use(express.static(path.join(__dirname, '../client/build')));
+
+// MongoDB Connection
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/gshop';
+
+// Try to connect to MongoDB, fall back to demo mode if unavailable
+mongoose.connect(MONGODB_URI)
+  .then(() => {
+    console.log('Connected to MongoDB');
+    mongoConnected = true;
+  })
+  .catch(err => {
+    console.log('MongoDB not available, switching to DEMO mode');
+    console.log('Error:', err.message);
+    useMongoDB = false;
+    mongoConnected = false;
+  });
+
+// Import Models (only use if MongoDB is connected)
+let User, Service, Transaction, Verification, SMSVerification;
+
+if (useMongoDB) {
+  User = require('./models/User');
+  Service = require('./models/Service');
+  Transaction = require('./models/Transaction');
+  Verification = require('./models/Verification');
+  SMSVerification = require('./models/SMSVerification');
+}
+
+// Import Routes
+const verificationRoutes = require('./routes/verification');
+const smsRoutes = require('./routes/sms');
+const transactionRoutes = require('./routes/transactions');
+const serviceRoutes = require('./routes/services');
+
+// Use Routes only if MongoDB is connected
+if (useMongoDB) {
+  app.use('/api/verification', verificationRoutes);
+  app.use('/api/sms', smsRoutes);
+  app.use('/api/transactions', transactionRoutes);
+  app.use('/api/services', serviceRoutes);
+}
+
+// JWT Middleware
+const auth = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'No token provided' });
+  
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.userId = decoded.userId;
+    next();
+  } catch (err) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+};
+
+// ==================== DEMO MODE ENDPOINTS ====================
+// These work without MongoDB using in-memory storage
+
+// MongoDB: Register
+app.post('/api/register', async (req, res) => {
+  try {
+    const { name, email, phone, password, location, skills } = req.body;
+    
+    if (!name || !email || !password) {
+      return res.status(400).json({ error: 'Name, email and password required' });
+    }
+    
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ error: 'User already exists' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const user = await User.create({
+      name,
+      email,
+      phone: phone || '',
+      password: hashedPassword,
+      location: location || { lat: 0, lng: 0 },
+      skills: skills || [],
+      randBalance: 1000,
+      escrowRand: 0,
+      totalEarnedRand: 0,
+      rating: 5,
+      verified: false,
+      phoneVerified: false
+    });
+
+    const token = jwt.sign({ userId: user._id.toString() }, JWT_SECRET, { expiresIn: '24h' });
+
+    res.json({
+      token,
+      user: {
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        randBalance: user.randBalance,
+        escrowRand: user.escrowRand,
+        skills: user.skills,
+        verified: user.verified,
+        phoneVerified: user.phoneVerified
+      }
+    });
+  } catch (err) {
+    console.error('Register error:', err);
+    res.status(500).json({ error: 'Server error', details: err.message });
+  }
+});
+
+// MongoDB: Login
+app.post('/api/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) {
+      return res.status(400).json({ error: 'Invalid credentials' });
+    }
+
+    const token = jwt.sign({ userId: user._id.toString() }, JWT_SECRET, { expiresIn: '24h' });
+
+    res.json({
+      token,
+      user: {
+        id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        phone: user.phone,
+        randBalance: user.randBalance,
+        escrowRand: user.escrowRand,
+        totalEarnedRand: user.totalEarnedRand,
+        verified: user.verified,
+        phoneVerified: user.phoneVerified
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error', details: err.message });
+  }
+});
+
+// MongoDB: Get Profile
+app.get('/api/profile', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.userId).select('-password');
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const userObj = user.toObject();
+    res.json({
+      ...userObj,
+      formattedRandBalance: currency.formatRand(user.randBalance)
+    });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error', details: err.message });
+  }
+});
+
+// Demo: Create Transaction Request with job images
+app.post('/api/transactions/request', auth, upload.array('jobImages', 5), async (req, res) => {
+  try {
+    const { serviceId, providerId, randAmount, description } = req.body;
+    
+    const requester = await User.findById(req.userId);
+    if (!requester) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    const amount = parseFloat(randAmount) || 50;
+    
+    if (requester.randBalance < amount) {
+      return res.status(400).json({ error: 'Insufficient Rand balance' });
+    }
+
+    // Move Rand to escrow
+    requester.randBalance -= amount;
+    requester.escrowRand += amount;
+
+    // Handle job description images
+    const jobDescriptionImages = req.files ? req.files.map(file => ({
+      url: `/uploads/proof/${file.filename}`,
+      caption: description || '',
+      uploadedAt: new Date()
+    })) : [];
+
+    const transaction = {
+      _id: String(memStorage.transactionIdCounter++),
+      requesterId: req.userId,
+      providerId,
+      serviceId,
+      randAmount: amount,
+      jobDescriptionImages,
+      proofImages: [],
+      status: 'pending',
+      escrowStatus: 'held',
+      createdAt: new Date().toISOString()
+    };
+
+    memStorage.transactions.push(transaction);
+
+    res.json({
+      message: 'Service requested. Rand held in escrow.',
+      transactionId: transaction._id,
+      jobImages: jobDescriptionImages.length
+    });
+  } catch (err) {
+    console.error('Request error:', err);
+    res.status(500).json({ error: 'Server error', details: err.message });
+  }
+});
+
+// Demo: Complete Transaction with proof images
+app.post('/api/transactions/complete/:id', auth, upload.array('proofImages', 5), async (req, res) => {
+  try {
+    const { rating, review } = req.body;
+
+    const transaction = memStorage.transactions.find(t => 
+      t._id === req.params.id && 
+      (t.requesterId === req.userId || t.providerId === req.userId) &&
+      ['pending', 'accepted', 'in_progress'].includes(t.status)
+    );
+
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    // Handle uploaded proof images
+    const proofImages = req.files ? req.files.map(file => ({
+      url: `/uploads/proof/${file.filename}`,
+      uploadedBy: req.userId,
+      uploadedAt: new Date(),
+      caption: review || ''
+    })) : [];
+
+    if (proofImages.length > 0) {
+      transaction.proofImages = [...transaction.proofImages, ...proofImages];
+    }
+
+    // Release escrow to provider
+    const requester = memStorage.users.find(u => u._id === transaction.requesterId);
+    const provider = memStorage.users.find(u => u._id === transaction.providerId);
+    
+    if (requester && provider) {
+      requester.escrowRand -= transaction.randAmount;
+      provider.randBalance += transaction.randAmount;
+      provider.totalEarnedRand += transaction.randAmount;
+    }
+
+    // Update transaction
+    transaction.status = 'completed';
+    transaction.escrowStatus = 'released';
+    transaction.completedAt = new Date().toISOString();
+
+    if (transaction.requesterId === req.userId) {
+      transaction.providerRating = parseInt(rating) || 5;
+      transaction.providerReview = review;
+    } else {
+      transaction.requesterRating = parseInt(rating) || 5;
+      transaction.requesterReview = review;
+    }
+
+    res.json({
+      message: 'Transaction completed. Rand released to provider.',
+      proofImages: transaction.proofImages
+    });
+  } catch (err) {
+    console.error('Complete error:', err);
+    res.status(500).json({ error: 'Server error', details: err.message });
+  }
+});
+
+// Demo: Get my transactions
+app.get('/api/transactions/my-transactions', auth, async (req, res) => {
+  try {
+    const transactions = memStorage.transactions.filter(t => 
+      t.requesterId === req.userId || t.providerId === req.userId
+    );
+    res.json(transactions);
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Demo: Cancel transaction
+app.post('/api/transactions/cancel/:id', auth, async (req, res) => {
+  try {
+    const transaction = memStorage.transactions.find(t => 
+      t._id === req.params.id && 
+      (t.requesterId === req.userId || t.providerId === req.userId) &&
+      ['pending', 'accepted'].includes(t.status)
+    );
+
+    if (!transaction) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    // Refund to requester
+    const requester = memStorage.users.find(u => u._id === transaction.requesterId);
+    if (requester) {
+      requester.escrowRand -= transaction.randAmount;
+      requester.randBalance += transaction.randAmount;
+    }
+
+    transaction.status = 'cancelled';
+    transaction.escrowStatus = 'refunded';
+
+    res.json({ message: 'Transaction cancelled. Rand refunded.' });
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Upload profile image
+app.post('/api/users/profile-image', auth, upload.single('profileImage'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image uploaded' });
+    }
+    
+    const imageUrl = `/uploads/profiles/${req.file.filename}`;
+    
+    // Update user in memory
+    const user = await User.findById(req.userId);
+    if (user) {
+      user.profileImage = imageUrl;
+    }
+    
+    res.json({ 
+      message: 'Profile image uploaded successfully',
+      imageUrl: imageUrl
+    });
+  } catch (err) {
+    console.error('Profile image upload error:', err);
+    res.status(500).json({ error: 'Server error uploading image' });
+  }
+});
+
+
+
+// Update user location
+app.put('/api/users/location', auth, async (req, res) => {
+  try {
+    const { lat, lng } = req.body;
+    
+    if (!lat || !lng) {
+      return res.status(400).json({ error: 'Latitude and longitude required' });
+    }
+    
+    if (mongoConnected && User) {
+      const user = await User.findByIdAndUpdate(
+        req.userId,
+        { 
+          location: { type: 'Point', coordinates: [lng, lat] },
+          'location.lat': lat,
+          'location.lng': lng
+        },
+        { new: true }
+      );
+      res.json({ message: 'Location updated', location: { lat, lng } });
+    } else {
+      // In-memory fallback
+      const user = memStorage.users.find(u => u._id === req.userId);
+      if (user) {
+        user.location = { lat, lng };
+        res.json({ message: 'Location updated', location: { lat, lng } });
+      } else {
+        res.status(404).json({ error: 'User not found' });
+      }
+    }
+  } catch (err) {
+    console.error('Location update error:', err);
+    res.status(500).json({ error: 'Server error updating location' });
+  }
+});
+
+// Health check
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    mode: mongoConnected ? 'MONGODB' : 'DEMO',
+    features: ['auth', 'verification', 'sms', 'escrow', 'transactions', 'rand-conversion', 'image-upload'],
+    currency: {
+      code: currency.CURRENCY_CODE,
+      symbol: currency.CURRENCY_SYMBOL,
+      creditToRandRate: currency.CREDIT_TO_RAND_RATE
+    },
+    stats: {
+      users: memStorage.users.length,
+      services: memStorage.services.length,
+      transactions: memStorage.transactions.length
+    },
+    timestamp: new Date().toISOString()
+  });
+});
+
+// Catch-all: serve React app for any non-API route
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, '../client/build', 'index.html'));
+});
+
+// Error handling
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ error: 'Something went wrong!', details: err.message });
+});
+
+const httpServer = http.createServer(app);
+
+const io = new Server(httpServer, {
+  cors: {
+    origin: [
+      'https://nonrectangularly-hyperaesthetic-dewey.ngrok-free.dev',
+      'http://localhost:3000',
+      'http://localhost:3001'
+    ],
+    methods: ['GET', 'POST'],
+    credentials: true
+  }
+});
+
+io.on('connection', (socket) => {
+  console.log('Client connected:', socket.id);
+  
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
+});
+
+httpServer.listen(PORT, () => {
+  console.log('========================================');
+  console.log('GShop Server running on port', PORT);
+  console.log('Mode:', mongoConnected ? 'MONGODB' : 'DEMO (In-Memory)');
+  console.log('Features: Auth, Services, Transactions, Image Upload');
+  console.log('========================================');
+});

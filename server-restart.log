@@ -1,0 +1,7 @@
+
+> gshop-server@1.0.0 start
+> node index.js
+
+Server running on port 3001
+Security features enabled: ID Verification, SMS OTP, Escrow
+Connected to MongoDB

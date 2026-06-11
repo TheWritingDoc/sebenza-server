@@ -1,0 +1,41 @@
+const mongoose = require( mongoose);
+
+const userSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  email: { type: String, required: true, unique: true },
+  phone: { type: String, required: true },
+  phoneVerified: { type: Boolean, default: false },
+  password: { type: String, required: true },
+  location: {
+    lat: { type: Number, required: true },
+    lng: { type: Number, required: true }
+  },
+  skills: [{ type: String }],
+  randBalance: { type: Number, default: 100 },
+  escrowRand: { type: Number, default: 0 },
+  totalEarnedRand: { type: Number, default: 0 },
+  bankAccount: {
+    accountNumber: { type: String, default: ' },
+    bankName: { type: String, default: ' },
+    accountHolder: { type: String, default: ' }
+  },
+  rating: { type: Number, default: 5 },
+  verified: { type: Boolean, default: false },
+  profileImage: { type: String, default: ' },
+  portfolioImages: [{
+    url: { type: String, required: true },
+    transactionId: { type: mongoose.Schema.Types.ObjectId, ref: Transaction },
+    serviceId: { type: mongoose.Schema.Types.ObjectId, ref: Service },
+    uploadedAt: { type: Date, default: Date.now },
+    caption: { type: String, default: ' }
+  }],
+  status: { 
+    type: String, 
+    enum: [online, after_hours, offline], 
+    default: online 
+  },
+  availableUntil: { type: Date },
+  createdAt: { type: Date, default: Date.now }
+});
+
+module.exports = mongoose.model(User, userSchema);
