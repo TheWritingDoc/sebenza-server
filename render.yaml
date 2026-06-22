@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: sebenza-server
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: MONGODB_URI
+        value: mongodb+srv://precisioncodesa_db_user:9k2k0KHisSxlpFsV@ge-shop-cluster.vyixtdm.mongodb.net/gshop?retryWrites=true&w=majority&appName=Ge-Shop-Cluster
+      - key: JWT_SECRET
+        value: gshop-super-secret-key-2026-precisioncode
+      - key: PORT
+        value: 3001
+      - key: RENDER
+        value: "true"
+      - key: NODE_ENV
+        value: production
