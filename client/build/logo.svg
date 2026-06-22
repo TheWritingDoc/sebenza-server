@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 320" width="860" height="320">
+  <defs>
+    <linearGradient id="brandGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    <clipPath id="cardClip">
+      <rect x="0" y="0" width="860" height="320" rx="24"/>
+    </clipPath>
+  </defs>
+
+  <!-- Card background -->
+  <rect x="0" y="0" width="860" height="320" rx="24" fill="#0f172a"/>
+
+  <!-- SA flag top + bottom bands -->
+  <g clip-path="url(#cardClip)">
+    <rect x="0"   y="0" width="143" height="9" fill="#007A4D"/>
+    <rect x="143" y="0" width="143" height="9" fill="#FFB81C"/>
+    <rect x="286" y="0" width="143" height="9" fill="#DE3831"/>
+    <rect x="429" y="0" width="143" height="9" fill="#002395"/>
+    <rect x="572" y="0" width="143" height="9" fill="#000000"/>
+    <rect x="715" y="0" width="145" height="9" fill="#007A4D"/>
+    <rect x="0"   y="311" width="143" height="9" fill="#007A4D"/>
+    <rect x="143" y="311" width="143" height="9" fill="#FFB81C"/>
+    <rect x="286" y="311" width="143" height="9" fill="#DE3831"/>
+    <rect x="429" y="311" width="143" height="9" fill="#002395"/>
+    <rect x="572" y="311" width="143" height="9" fill="#000000"/>
+    <rect x="715" y="311" width="145" height="9" fill="#007A4D"/>
+  </g>
+
+  <!-- Icon mark -->
+  <g transform="translate(48, 76)">
+    <rect width="168" height="168" rx="38" fill="url(#brandGrad)"/>
+    <text x="79" y="124" font-family="Segoe UI, Arial, sans-serif" font-size="112" font-weight="800"
+          text-anchor="middle" fill="#ffffff">S</text>
+    <g transform="translate(130,41)">
+      <path d="M0,-17 L4,-5 17,-5 7,3 10,15 0,8 -10,15 -7,3 -17,-5 -4,-5 Z" fill="url(#spark)"/>
+    </g>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="256" y="178" font-family="Segoe UI, Arial, sans-serif"
+        font-size="104" font-weight="800" fill="white" letter-spacing="-3">Sebenza</text>
+
+  <!-- SA flag stripe under wordmark -->
+  <rect x="260" y="198" width="87" height="6" rx="3" fill="#007A4D"/>
+  <rect x="353" y="198" width="87" height="6" rx="3" fill="#FFB81C"/>
+  <rect x="446" y="198" width="87" height="6" rx="3" fill="#DE3831"/>
+  <rect x="539" y="198" width="87" height="6" rx="3" fill="#002395"/>
+  <rect x="632" y="198" width="50" height="6" rx="3" fill="#000000"/>
+  <rect x="688" y="198" width="80" height="6" rx="3" fill="#007A4D"/>
+
+  <!-- Tagline -->
+  <text x="262" y="234" font-family="Arial, sans-serif" font-size="17"
+        fill="#FFB81C" letter-spacing="4" font-weight="700">FIND HELP. FIND WORK. CLOSE TO HOME.</text>
+
+  <!-- Sub-tagline -->
+  <text x="262" y="262" font-family="Arial, sans-serif" font-size="13"
+        fill="#94a3b8" letter-spacing="3">Proudly South African · Ubuntu · Mzansi Made</text>
+</svg>

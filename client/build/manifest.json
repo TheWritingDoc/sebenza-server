@@ -1,0 +1,17 @@
+{
+  "short_name": "Sebenza",
+  "name": "Sebenza — Local Help & Work",
+  "icons": [
+    { "src": "logo-icon.png", "sizes": "64x64 32x32 24x24 16x16", "type": "image/png" },
+    { "src": "logo.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "logo.png", "sizes": "512x512", "type": "image/png" }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#6366f1",
+  "background_color": "#ffffff",
+  "orientation": "portrait",
+  "scope": "/",
+  "description": "Find help. Find work. Close to home. South Africa's community work app.",
+  "categories": ["lifestyle", "productivity"]
+}

@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="60%" stop-color="#7c5ce8"/>
+      <stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient>
+    <linearGradient id="spark" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#bg)"/>
+  <text x="240" y="378" font-family="Segoe UI, Arial, sans-serif" font-size="340" font-weight="800"
+        text-anchor="middle" fill="#ffffff">S</text>
+  <!-- gold spark: the sebenza energy mark -->
+  <g transform="translate(396,124)">
+    <path d="M0,-50 L12,-14 50,-14 20,9 30,46 0,24 -30,46 -20,9 -50,-14 -12,-14 Z" fill="url(#spark)"/>
+  </g>
+</svg>
