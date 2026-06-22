@@ -290,7 +290,9 @@ app.post('/api/register', authLimiter, [
   body('name').trim().isLength({ min: 2, max: 100 }).withMessage('Name must be 2-100 characters'),
   body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
-  body('phone').optional().trim().isMobilePhone().withMessage('Valid phone number required')
+  // Strip spaces/dashes/parens so "071 234 5678" and "+27 71 234 5678" pass validation
+  body('phone').optional().customSanitizer(v => String(v || '').replace(/[\s\-().]/g, ''))
+    .custom(v => v === '' || /^\+?\d{9,15}$/.test(v)).withMessage('Valid phone number required')
 ], async (req, res) => {
   try {
     const errors = validationResult(req);
@@ -298,7 +300,7 @@ app.post('/api/register', authLimiter, [
       return res.status(400).json({ error: 'Validation failed', details: errors.array() });
     }
 
-    const { name, email, phone, password, location, skills, primaryCategory, ref } = req.body;
+    const { name, email, phone, password, location, skills, primaryCategory, ref, accountType, businessName, teamSize } = req.body;
     
     const existingUser = await User.findOne({ email });
     if (existingUser) {
@@ -358,7 +360,10 @@ app.post('/api/register', authLimiter, [
       verified: false,
       phoneVerified: false,
       referralCode,
-      referredBy
+      referredBy,
+      accountType: ['individual', 'team', 'business'].includes(accountType) ? accountType : 'individual',
+      businessName: String(businessName || '').trim().slice(0, 120),
+      teamSize: Math.max(1, Math.min(50, parseInt(teamSize) || 1))
     });
 
     const token = jwt.sign({ userId: user._id.toString() }, JWT_SECRET, { expiresIn: '30d' });
@@ -380,7 +385,10 @@ app.post('/api/register', authLimiter, [
         verified: user.verified,
         phoneVerified: user.phoneVerified,
         referralCode: user.referralCode,
-        referralCount: user.referralCount
+        referralCount: user.referralCount,
+        accountType: user.accountType,
+        businessName: user.businessName,
+        teamSize: user.teamSize
       }
     });
   } catch (err) {
@@ -453,7 +461,13 @@ app.post('/api/login', authLimiter, [
         freeServiceUsed: user.freeServiceUsed,
         verified: user.verified,
         phoneVerified: user.phoneVerified,
-        emailVerified: user.emailVerified || false
+        emailVerified: user.emailVerified || false,
+        profileImage: user.profileImage || '',
+        referralCode: user.referralCode,
+        location: user.location ? { lat: user.location.lat, lng: user.location.lng } : null,
+        accountType: user.accountType || 'individual',
+        businessName: user.businessName || '',
+        teamSize: user.teamSize || 1
       }
     });
   } catch (err) {
@@ -719,17 +733,6 @@ app.get('/api/services/public', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
-// Enhanced health endpoint
-app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'ok',
-    mode: mongoConnected ? 'MONGODB' : 'DEMO',
-    time: new Date().toISOString(),
-    version: '1.0.0',
-    uptime: process.uptime()
-  });
-});
-
 // Versioned health endpoint
 app.get('/api/v1/health', (req, res) => {
   res.json({
@@ -1044,7 +1047,7 @@ httpServer.listen(PORT, () => {
 
   console.log('========================================');
 
-  console.log('GShop Server running on port', PORT);
+  console.log('Sebenza Server running on port', PORT);
 
   console.log('Mode:', mongoConnected ? 'MONGODB' : 'DEMO (In-Memory)');
 

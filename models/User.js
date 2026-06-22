@@ -105,6 +105,28 @@ const userSchema = new mongoose.Schema({
   professionalServiceTCAccepted: { type: Boolean, default: false },
   professionalServiceTCAcceptedAt: { type: Date },
 
+  // Account type: individual user, small team, or professional business
+  accountType: { type: String, enum: ['individual', 'team', 'business'], default: 'individual' },
+  businessName: { type: String, default: '' },   // team or business display name
+  teamSize: { type: Number, default: 1 },
+
+  // Trust documents — each upload raises the user's trust score
+  trustDocs: [{
+    docType: { type: String, enum: ['address', 'qualification', 'experience'], required: true },
+    title: { type: String, default: '' },
+    fileUrl: { type: String, default: '' },
+    status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },
+    uploadedAt: { type: Date, default: Date.now }
+  }],
+
+  // Work experience entries (no document required)
+  workExperience: [{
+    title: { type: String, required: true },
+    place: { type: String, default: '' },
+    years: { type: String, default: '' },
+    addedAt: { type: Date, default: Date.now }
+  }],
+
   createdAt: { type: Date, default: Date.now }
 });
 
