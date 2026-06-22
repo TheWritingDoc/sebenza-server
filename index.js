@@ -135,7 +135,9 @@ app.use('/downloads', express.static(path.join(__dirname, 'downloads'), {
 }));
 
 // Serve static files from React build - supports both local and Render paths
-const buildPath = process.env.RENDER ? path.join(__dirname, 'client', 'build') : path.join(__dirname, '../client/build_v2');
+const buildPath = process.env.RENDER 
+  ? path.join(__dirname, 'client', 'build') 
+  : path.join(__dirname, '../client/build_v2');
 app.use(express.static(buildPath));
 
 // MongoDB Connection with retry logic
@@ -753,7 +755,9 @@ app.use('/api', (req, res) => {
 // Catch-all: serve React app for any non-API route
 app.get('*', (req, res) => {
   // Serve React app for all other routes
-  const indexPath = process.env.RENDER ? path.join(__dirname, 'client', 'build', 'index.html') : path.join(__dirname, '../client/build_v2', 'index.html');
+  const indexPath = process.env.RENDER 
+    ? path.join(__dirname, 'client', 'build', 'index.html') 
+    : path.join(__dirname, '../client/build_v2', 'index.html');
   res.sendFile(indexPath);
 });
 
