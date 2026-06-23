@@ -9,13 +9,6 @@ const upload = require('../middleware/upload');
 const jwt = require('jsonwebtoken');
 const { sendNotification } = require('../utils/notifications');
 
-// ─── Helper: get io and onlineUsers from app ───
-function getNotifier(req) {
-  const io = req.app.get('io');
-  const onlineUsers = req.app.get('onlineUsers');
-  return { io, onlineUsers };
-}
-
 // ─── Auth middleware ───
 const auth = (req, res, next) => {
   const authHeader = req.headers.authorization || '';
@@ -37,6 +30,14 @@ const auth = (req, res, next) => {
     res.status(401).json({ error: 'Invalid token' });
   }
 };
+
+// ─── Fire-and-forget notification (never blocks the response) ───
+function notify(req, userId, payload) {
+  const io = req.app.get('io');
+  const onlineUsers = req.app.get('onlineUsers');
+  return sendNotification(io, onlineUsers, userId, payload)
+    .catch(err => console.error('[Notify] failed:', err.message));
+}
 
 // ─── Haversine distance (km) ───
 function getDistanceKm(lat1, lng1, lat2, lng2) {
@@ -277,7 +278,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // ─── POST /api/jobs — Create job ───
-router.post('/', auth, upload.array('jobPostImages', 10), async (req, res) => {
+router.post('/', auth, upload.array('images', 10), async (req, res) => {
   try {
     const { title, description, category, budget, budgetMin, budgetMax, isUrgent, lat, lng, scheduledDate, proposedTime, timeIsNegotiable, applicationDeadline, estimatedDuration, tags } = req.body;
 
@@ -292,18 +293,12 @@ router.post('/', auth, upload.array('jobPostImages', 10), async (req, res) => {
         latVal = parsedLoc.lat;
         lngVal = parsedLoc.lng;
       } catch (e) {
-        // Invalid JSON, will use default below
+        // Invalid JSON, will fail validation below
       }
     }
     
-    // Default to Port Elizabeth if location not provided
-    if (latVal === undefined || lngVal === undefined) {
-      latVal = -33.9249;
-      lngVal = 25.5700;
-    }
-    
-    if (!title || !description || !category || !budget) {
-      return res.status(400).json({ error: 'Missing required fields: title, description, category, budget' });
+    if (!title || !description || !category || !budget || latVal === undefined || lngVal === undefined) {
+      return res.status(400).json({ error: 'Missing required fields: title, description, category, budget, lat, lng' });
     }
 
     const latNum = parseFloat(latVal);
@@ -323,7 +318,7 @@ router.post('/', auth, upload.array('jobPostImages', 10), async (req, res) => {
     const cleanTags = tags ? (Array.isArray(tags) ? tags : tags.split(',')).map(t => sanitizeString(t, MAX_TAG)).filter(Boolean) : [];
 
     const images = req.files ? req.files.map(f => ({
-      url: `/uploads/jobs/${f.filename}`,
+      url: `/uploads/proof/${f.filename}`,
       caption: '',
       uploadedAt: new Date()
     })) : [];
@@ -349,6 +344,34 @@ router.post('/', auth, upload.array('jobPostImages', 10), async (req, res) => {
 
     await job.save();
     res.status(201).json({ message: 'Job posted', job: { _id: job._id } });
+
+    // Notify nearby online users about the new job (after responding)
+    try {
+      const io = req.app.get('io');
+      const onlineUsers = req.app.get('onlineUsers');
+      if (io && onlineUsers && onlineUsers.size > 0) {
+        const NEARBY_KM = 20;
+        const onlineUserIds = Array.from(onlineUsers.keys());
+        const nearbyUsers = await User.find({ _id: { $in: onlineUserIds } }).select('location');
+        for (const u of nearbyUsers) {
+          if (String(u._id) === String(req.userId)) continue;
+          const ulat = u.location?.lat;
+          const ulng = u.location?.lng;
+          if (ulat == null || ulng == null) continue;
+          const dist = getDistanceKm(latNum, lngNum, ulat, ulng);
+          if (dist <= NEARBY_KM) {
+            notify(req, u._id, {
+              type: 'job_nearby',
+              title: job.isUrgent ? '🚨 Urgent Job Nearby!' : 'New Job Nearby!',
+              message: `"${job.title}" — R${job.budgetMin || job.budget}${job.budgetMax ? `–R${job.budgetMax}` : ''}, ${dist < 1 ? '<1' : Math.round(dist)}km away`,
+              jobId: job._id
+            });
+          }
+        }
+      }
+    } catch (notifyErr) {
+      console.error('Nearby job notify error:', notifyErr.message);
+    }
   } catch (err) {
     console.error('Create job error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -395,30 +418,17 @@ router.post('/:id/apply', auth, async (req, res) => {
 
     res.json({ message: 'Application submitted' });
 
-    // ── Notify job poster ──
+    // Notify the job poster about the new application (after responding)
     try {
-      const { io, onlineUsers } = getNotifier(req);
-      const applicant = await User.findById(req.userId).select('name').lean();
-      await sendNotification(io, onlineUsers, String(job.posterId), {
+      const applicant = await User.findById(req.userId).select('name');
+      notify(req, updated.posterId, {
         type: 'application_received',
-        title: 'New Application',
-        message: `${applicant?.name || 'Someone'} applied to your job "${job.title}" for R${amount}`,
-        jobId: job._id,
-        priority: 'high',
-        vibrate: true,
-        sound: true,
-        data: { 
-          applicantId: req.userId, 
-          proposedAmount: amount,
-          screen: 'JobBoard',
-          route: `/jobs?view=${job._id}`,
-          tab: 'applicants',
-          action: 'show_applicants',
-          autoRoute: true
-        }
+        title: 'New Offer to Help!',
+        message: `${applicant?.name || 'Someone'} offered R${amount} for "${updated.title}"`,
+        jobId: updated._id
       });
     } catch (notifyErr) {
-      console.error('Apply notification error:', notifyErr.message);
+      console.error('Apply notify error:', notifyErr.message);
     }
   } catch (err) {
     console.error('Apply error:', err);
@@ -461,32 +471,18 @@ router.post('/:id/applications/:appId/approve', auth, async (req, res) => {
 
     res.json({ message: 'Application approved' });
 
-    // ── Notify applicant ──
     try {
-      const { io, onlineUsers } = getNotifier(req);
-      const app = job.applications.find(a => String(a._id) === req.params.appId);
-      if (app) {
-        await sendNotification(io, onlineUsers, String(app.applicantId), {
+      const approvedApp = job.applications.id(req.params.appId);
+      if (approvedApp) {
+        notify(req, approvedApp.applicantId, {
           type: 'application_approved',
-          title: 'Application Approved',
-          message: `Your application for "${job.title}" was approved! Confirm to proceed.`,
-          jobId: job._id,
-          priority: 'high',
-          vibrate: true,
-          sound: true,
-          requireInteraction: true,
-          data: { 
-            approvedAmount: approvedAmount ? parseFloat(approvedAmount) : undefined,
-            screen: 'JobBoard',
-            route: `/jobs?view=${job._id}`,
-            tab: 'confirm',
-            action: 'show_confirm_button',
-            autoRoute: true
-          }
+          title: 'Your Offer Was Approved! 🎉',
+          message: `You got "${job.title}" — confirm now to lock it in`,
+          jobId: job._id
         });
       }
     } catch (notifyErr) {
-      console.error('Approve notification error:', notifyErr.message);
+      console.error('Approve notify error:', notifyErr.message);
     }
   } catch (err) {
     console.error('Approve error:', err);
@@ -510,6 +506,20 @@ router.post('/:id/applications/:appId/reject', auth, async (req, res) => {
     );
     if (!job) return res.status(404).json({ error: 'Job or application not found' });
     res.json({ message: 'Application rejected' });
+
+    try {
+      const rejectedApp = job.applications.id(req.params.appId);
+      if (rejectedApp) {
+        notify(req, rejectedApp.applicantId, {
+          type: 'application_rejected',
+          title: 'Application Update',
+          message: `Your offer for "${job.title}" wasn't selected this time — keep going!`,
+          jobId: job._id
+        });
+      }
+    } catch (notifyErr) {
+      console.error('Reject notify error:', notifyErr.message);
+    }
   } catch (err) {
     console.error('Reject error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -543,6 +553,18 @@ router.post('/:id/applications/:appId/negotiate', auth, async (req, res) => {
     await job.save();
 
     res.json({ message: 'Negotiation sent' });
+
+    try {
+      const counterparty = isPoster ? app.applicantId : job.posterId;
+      notify(req, counterparty, {
+        type: 'negotiation_updated',
+        title: 'New Counter Offer 🤝',
+        message: `R${parseFloat(amount) || app.proposedAmount} proposed for "${job.title}"`,
+        jobId: job._id
+      });
+    } catch (notifyErr) {
+      console.error('Negotiate notify error:', notifyErr.message);
+    }
   } catch (err) {
     console.error('Negotiate error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -556,7 +578,7 @@ router.post('/:id/applications/:appId/accept-offer', auth, async (req, res) => {
       {
         _id: req.params.id,
         'applications._id': req.params.appId,
-        'applications.applicantId': req.userId,
+        'applications.applicantId': new mongoose.Types.ObjectId(req.userId),
         status: 'approved'
       },
       { $set: { status: 'accepted', 'applications.$.status': 'accepted' } },
@@ -565,31 +587,12 @@ router.post('/:id/applications/:appId/accept-offer', auth, async (req, res) => {
     if (!job) return res.status(400).json({ error: 'Cannot accept offer' });
     res.json({ message: 'Offer accepted' });
 
-    // ── Notify job poster ──
-    try {
-      const { io, onlineUsers } = getNotifier(req);
-      const applicant = await User.findById(req.userId).select('name').lean();
-      await sendNotification(io, onlineUsers, String(job.posterId), {
-        type: 'offer_accepted',
-        title: 'Offer Accepted',
-        message: `${applicant?.name || 'Your helper'} accepted the offer for "${job.title}". You can now start the job.`,
-        jobId: job._id,
-        priority: 'high',
-        vibrate: true,
-        sound: true,
-        requireInteraction: true,
-        data: { 
-          status: 'accepted',
-          screen: 'JobBoard',
-          route: `/jobs/workhub/${job._id}`,
-          tab: 'qr_scanner',
-          action: 'show_qr_scanner',
-          autoRoute: true
-        }
-      });
-    } catch (notifyErr) {
-      console.error('Accept offer notification error:', notifyErr.message);
-    }
+    notify(req, job.posterId, {
+      type: 'offer_accepted',
+      title: 'Offer Accepted ✅',
+      message: `Your helper accepted the offer for "${job.title}"`,
+      jobId: job._id
+    });
   } catch (err) {
     console.error('Accept offer error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -600,12 +603,19 @@ router.post('/:id/applications/:appId/accept-offer', auth, async (req, res) => {
 router.post('/:id/applications/:appId/reject-offer', auth, async (req, res) => {
   try {
     const job = await Job.findOneAndUpdate(
-      { _id: req.params.id, 'applications._id': req.params.appId, 'applications.applicantId': req.userId },
+      { _id: req.params.id, 'applications._id': req.params.appId, 'applications.applicantId': new mongoose.Types.ObjectId(req.userId) },
       { $set: { 'applications.$.status': 'rejected' } },
       { new: true }
     );
     if (!job) return res.status(404).json({ error: 'Not found' });
     res.json({ message: 'Offer rejected' });
+
+    notify(req, job.posterId, {
+      type: 'offer_rejected',
+      title: 'Offer Declined',
+      message: `Your offer for "${job.title}" was declined — you can send a new one`,
+      jobId: job._id
+    });
   } catch (err) {
     console.error('Reject offer error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -619,61 +629,22 @@ router.post('/:id/applications/:appId/confirm', auth, async (req, res) => {
       {
         _id: req.params.id,
         'applications._id': req.params.appId,
-        'applications.applicantId': req.userId,
+        'applications.applicantId': new mongoose.Types.ObjectId(req.userId),
         status: 'approved',
         'applications.status': 'approved'
       },
-      { $set: { status: 'accepted', 'applications.$.status': 'accepted', acceptedApplicationId: req.params.appId } },
+      { $set: { status: 'accepted', 'applications.$.status': 'accepted' } },
       { new: true }
     );
     if (!job) return res.status(400).json({ error: 'Cannot confirm: offer not approved or already handled' });
-    res.json({ message: 'Offer confirmed', job });
+    res.json({ message: 'Offer confirmed' });
 
-    // ── Notify job poster ──
-    try {
-      const { io, onlineUsers } = getNotifier(req);
-      const applicant = await User.findById(req.userId).select('name').lean();
-      await sendNotification(io, onlineUsers, String(job.posterId), {
-        type: 'offer_accepted',
-        title: 'Offer Accepted',
-        message: `${applicant?.name || 'Your helper'} accepted the offer for "${job.title}". You can now start the job.`,
-        jobId: job._id,
-        priority: 'high',
-        vibrate: true,
-        sound: true,
-        requireInteraction: true,
-        data: { 
-          status: 'accepted',
-          screen: 'JobBoard',
-          route: `/jobs/workhub/${job._id}`,
-          tab: 'qr_scanner',
-          action: 'show_qr_scanner',
-          autoRoute: true
-        }
-      });
-    } catch (notifyErr) {
-      console.error('Confirm notification error:', notifyErr.message);
-    }
-
-    // ── Create transaction record ──
-    try {
-      const Transaction = require('../models/Transaction');
-      const existingTx = await Transaction.findOne({ jobId: job._id });
-      if (!existingTx) {
-        const acceptedApp = job.applications.find(a => String(a._id) === String(req.params.appId));
-        await Transaction.create({
-          jobId: job._id,
-          requesterId: job.posterId,
-          providerId: req.userId,
-          randAmount: acceptedApp?.approvedAmount || acceptedApp?.proposedAmount || job.budget || 0,
-          status: 'pending',
-          paymentMethod: job.paymentMethod === 'escrow' ? 'escrow' : 'cash'
-        });
-        console.log(`[Confirm] Transaction created for job ${job._id}`);
-      }
-    } catch (txErr) {
-      console.error('Confirm transaction error:', txErr.message);
-    }
+    notify(req, job.posterId, {
+      type: 'schedule_confirmed',
+      title: 'Job Confirmed 📅',
+      message: `Your helper confirmed "${job.title}" — it's locked in!`,
+      jobId: job._id
+    });
   } catch (err) {
     console.error('Confirm error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -695,32 +666,18 @@ router.post('/:id/start', auth, async (req, res) => {
     if (!job) return res.status(400).json({ error: 'Cannot start job' });
     res.json({ message: 'Job started' });
 
-    // ── Notify provider ──
     try {
-      const { io, onlineUsers } = getNotifier(req);
-      const app = job.applications.find(a => String(a._id) === String(job.acceptedApplicationId));
-      if (app) {
-        await sendNotification(io, onlineUsers, String(app.applicantId), {
+      const acceptedApp = job.applications.id(job.acceptedApplicationId);
+      if (acceptedApp) {
+        notify(req, acceptedApp.applicantId, {
           type: 'job_started',
-          title: 'Job Started',
-          message: `"${job.title}" has started! Head to the location and begin work.`,
-          jobId: job._id,
-          priority: 'high',
-          vibrate: true,
-          sound: true,
-          requireInteraction: true,
-          data: { 
-            status: 'in_progress',
-            screen: 'JobBoard',
-            route: `/jobs/workhub/${job._id}`,
-            tab: 'work',
-            action: 'show_work_tab',
-            autoRoute: true
-          }
+          title: 'Job Started 🚀',
+          message: `"${job.title}" is now in progress`,
+          jobId: job._id
         });
       }
     } catch (notifyErr) {
-      console.error('Start job notification error:', notifyErr.message);
+      console.error('Start notify error:', notifyErr.message);
     }
   } catch (err) {
     console.error('Start job error:', err);
@@ -754,6 +711,13 @@ router.post('/:id/applications/:appId/withdraw', auth, async (req, res) => {
     );
     if (!job) return res.status(404).json({ error: 'Not found' });
     res.json({ message: 'Application withdrawn' });
+
+    notify(req, job.posterId, {
+      type: 'application_withdrawn',
+      title: 'Application Withdrawn',
+      message: `A helper withdrew their offer for "${job.title}"`,
+      jobId: job._id
+    });
   } catch (err) {
     console.error('Withdraw error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -771,6 +735,23 @@ router.post('/:id/cancel', auth, async (req, res) => {
     job.status = 'cancelled';
     await job.save();
     res.json({ message: 'Job cancelled' });
+
+    try {
+      // Notify everyone who applied and wasn't already rejected/withdrawn
+      const toNotify = (job.applications || [])
+        .filter(a => !['rejected', 'withdrawn'].includes(a.status))
+        .map(a => String(a.applicantId));
+      for (const uid of [...new Set(toNotify)]) {
+        notify(req, uid, {
+          type: 'job_cancelled',
+          title: 'Job Cancelled',
+          message: `"${job.title}" was cancelled by the poster`,
+          jobId: job._id
+        });
+      }
+    } catch (notifyErr) {
+      console.error('Cancel notify error:', notifyErr.message);
+    }
   } catch (err) {
     console.error('Cancel error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -795,6 +776,13 @@ router.post('/:id/ping', auth, async (req, res) => {
     await job.save();
 
     res.json({ message: 'Ping sent', pingCount: app.pingCount });
+
+    notify(req, job.posterId, {
+      type: 'doorbell_rung',
+      title: 'Ding dong! 🔔',
+      message: `Your helper for "${job.title}" is trying to reach you`,
+      jobId: job._id
+    });
   } catch (err) {
     console.error('Ping error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -957,30 +945,12 @@ router.post('/:id/complete', auth, upload.array('photos', 10), async (req, res) 
 
     res.json({ message: 'Completion submitted, awaiting poster confirmation' });
 
-    // ── Notify job poster ──
-    try {
-      const { io, onlineUsers } = getNotifier(req);
-      await sendNotification(io, onlineUsers, String(job.posterId), {
-        type: 'completion_requested',
-        title: 'Work Completed',
-        message: `Your job "${job.title}" has been marked as complete. Please review and confirm.`,
-        jobId: job._id,
-        priority: 'high',
-        vibrate: true,
-        sound: true,
-        requireInteraction: true,
-        data: { 
-          status: 'pending_review',
-          screen: 'JobBoard',
-          route: `/jobs/workhub/${job._id}`,
-          tab: 'complete',
-          action: 'show_confirm_completion',
-          autoRoute: true
-        }
-      });
-    } catch (notifyErr) {
-      console.error('Complete notification error:', notifyErr.message);
-    }
+    notify(req, job.posterId, {
+      type: 'completion_requested',
+      title: 'Work Done — Please Confirm 🔔',
+      message: `Your helper marked "${job.title}" as complete. Check & confirm to release payment.`,
+      jobId: job._id
+    });
   } catch (err) {
     console.error('Complete error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -1018,32 +988,18 @@ router.post('/:id/confirm-completion', auth, upload.array('photos', 10), async (
 
     res.json({ message: 'Completion confirmed, awaiting payment' });
 
-    // ── Notify provider ──
     try {
-      const { io, onlineUsers } = getNotifier(req);
-      const app = job.applications.find(a => String(a._id) === String(job.acceptedApplicationId));
-      if (app) {
-        await sendNotification(io, onlineUsers, String(app.applicantId), {
+      const acceptedApp = job.applications.find(a => String(a._id) === String(job.acceptedApplicationId));
+      if (acceptedApp) {
+        notify(req, acceptedApp.applicantId, {
           type: 'job_pending_payment',
-          title: 'Work Approved',
-          message: `Great news! The poster confirmed your work on "${job.title}". Payment is now pending.`,
-          jobId: job._id,
-          priority: 'high',
-          vibrate: true,
-          sound: true,
-          requireInteraction: true,
-          data: { 
-            status: 'pending_payment',
-            screen: 'JobBoard',
-            route: `/jobs/workhub/${job._id}`,
-            tab: 'payment',
-            action: 'show_payment_tab',
-            autoRoute: true
-          }
+          title: 'Completion Confirmed 💳',
+          message: `"${job.title}" confirmed — payment handshake is next`,
+          jobId: job._id
         });
       }
     } catch (notifyErr) {
-      console.error('Confirm completion notification error:', notifyErr.message);
+      console.error('Confirm completion notify error:', notifyErr.message);
     }
   } catch (err) {
     console.error('Confirm completion error:', err);
@@ -1161,62 +1117,6 @@ router.post('/:id/payment-handshake', auth, async (req, res) => {
       message: alreadyConfirmed.length >= 2 ? 'Payment confirmed by both parties. Job completed.' : 'Payment confirmation recorded. Awaiting other party.',
       paymentConfirmed: job.paymentConfirmed
     });
-
-    // ── Notify other party ──
-    if (alreadyConfirmed.length >= 2) {
-      try {
-        const { io, onlineUsers } = getNotifier(req);
-        const app = job.applications.find(a => String(a._id) === String(job.acceptedApplicationId));
-        const otherPartyId = isPoster ? String(app.applicantId) : String(job.posterId);
-        await sendNotification(io, onlineUsers, otherPartyId, {
-          type: 'job_completed',
-          title: 'Job Completed',
-          message: `Payment confirmed! "${job.title}" is now complete.`,
-          jobId: job._id,
-          priority: 'high',
-          vibrate: true,
-          sound: true,
-          requireInteraction: true,
-          data: { 
-            status: 'completed',
-            screen: 'JobBoard',
-            route: `/jobs/workhub/${job._id}`,
-            tab: 'review',
-            action: 'show_review_tab',
-            autoRoute: true
-          }
-        });
-      } catch (notifyErr) {
-        console.error('Payment completion notification error:', notifyErr.message);
-      }
-    } else {
-      // Notify the other party that confirmation is awaiting them
-      try {
-        const { io, onlineUsers } = getNotifier(req);
-        const app = job.applications.find(a => String(a._id) === String(job.acceptedApplicationId));
-        const otherPartyId = isPoster ? String(app.applicantId) : String(job.posterId);
-        await sendNotification(io, onlineUsers, otherPartyId, {
-          type: 'payment_pending',
-          title: 'Payment Confirmation Needed',
-          message: `The other party confirmed payment for "${job.title}". Please confirm to complete the job.`,
-          jobId: job._id,
-          priority: 'high',
-          vibrate: true,
-          sound: true,
-          requireInteraction: true,
-          data: { 
-            status: 'pending_payment',
-            screen: 'JobBoard',
-            route: `/jobs/workhub/${job._id}`,
-            tab: 'payment',
-            action: 'show_payment_tab',
-            autoRoute: true
-          }
-        });
-      } catch (notifyErr) {
-        console.error('Payment pending notification error:', notifyErr.message);
-      }
-    }
   } catch (err) {
     console.error('Payment handshake error:', err);
     res.status(500).json({ error: 'Server error' });
