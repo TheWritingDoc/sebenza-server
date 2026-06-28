@@ -75,6 +75,23 @@ function toPublicJob(job, requesterId) {
   return j;
 }
 
+// ─── Resolve the requester's own application on a job ───
+// The web client ("I'm Helping" tab, the Confirm/Decline buttons and the job
+// detail modal) keys entirely off `job.myApplication`. If the API never sends
+// it, the applicant can never see the "Confirm" action after the poster
+// approves them — so the poster sits forever on "Waiting for applicant
+// confirmation". This returns the requester's own application sub-document as a
+// plain object (or null) so it can be attached to the response payload.
+function findMyApplication(applications, userId) {
+  if (!Array.isArray(applications) || !userId) return null;
+  const mine = applications.find(a => {
+    const aid = a && a.applicantId && (a.applicantId._id || a.applicantId);
+    return aid && String(aid) === String(userId);
+  });
+  if (!mine) return null;
+  return mine.toObject ? mine.toObject() : mine;
+}
+
 // ─── Validation helpers ───
 const MAX_TITLE = 120;
 const MAX_DESC = 5000;
@@ -182,7 +199,11 @@ router.get('/', async (req, res) => {
       try { reqUserId = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key').userId; } catch (e) {}
     }
 
-    res.json(paginated.map(j => toPublicJob(j, reqUserId)));
+    res.json(paginated.map(j => {
+      const pub = toPublicJob(j, reqUserId);
+      pub.myApplication = findMyApplication(j.applications, reqUserId);
+      return pub;
+    }));
   } catch (err) {
     console.error('Browse jobs error:', err);
     res.status(500).json({ error: 'Server error fetching jobs' });
@@ -196,7 +217,11 @@ router.get('/my-jobs', auth, async (req, res) => {
       .populate('applications.applicantId', 'name avatar rating')
       .populate('acceptedApplicationId', 'applicantId')
       .sort({ createdAt: -1 });
-    res.json(jobs);
+    res.json(jobs.map(j => {
+      const obj = j.toObject();
+      obj.myApplication = findMyApplication(obj.applications, req.userId);
+      return obj;
+    }));
   } catch (err) {
     console.error('My jobs error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -210,7 +235,11 @@ router.get('/my-applications', auth, async (req, res) => {
       .populate('posterId', 'name avatar rating')
       .populate('applications.applicantId', 'name avatar rating')
       .sort({ createdAt: -1 });
-    res.json(jobs);
+    res.json(jobs.map(j => {
+      const obj = j.toObject();
+      obj.myApplication = findMyApplication(obj.applications, req.userId);
+      return obj;
+    }));
   } catch (err) {
     console.error('My applications error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -266,11 +295,17 @@ router.get('/:id', async (req, res) => {
       (a.status === 'approved' || a.status === 'accepted')
     );
 
+    const myApplication = findMyApplication(job.applications, reqUserId);
+
     if (isPoster || isAcceptedApplicant) {
-      return res.json(job);
+      const obj = job.toObject();
+      obj.myApplication = myApplication;
+      return res.json(obj);
     }
 
-    res.json(toPublicJob(job, reqUserId));
+    const pub = toPublicJob(job, reqUserId);
+    pub.myApplication = myApplication;
+    res.json(pub);
   } catch (err) {
     console.error('Get job error:', err);
     res.status(500).json({ error: 'Server error' });

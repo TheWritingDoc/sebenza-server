@@ -5,3 +5,4 @@ downloads/
 *.log
 node_modules/
 client_build/
+tests/e2e/screenshots/

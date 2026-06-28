@@ -5,7 +5,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "test": "node test/jobs.myApplication.test.js",
+    "test:e2e": "node tests/e2e/sebenza-e2e.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
