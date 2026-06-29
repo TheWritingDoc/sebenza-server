@@ -1184,7 +1184,7 @@ router.post('/:id/partial-release', auth, async (req, res) => {
 // ─── POST /api/jobs/:id/qr-handshake ───
 router.post('/:id/qr-handshake', auth, async (req, res) => {
   try {
-    const { scannedUserId, lat, lng } = req.body;
+    const { scannedUserId, lat, lng, manual } = req.body;
     const job = await Job.findById(req.params.id);
     if (!job) return res.status(404).json({ error: 'Job not found' });
 
@@ -1193,24 +1193,96 @@ router.post('/:id/qr-handshake', auth, async (req, res) => {
     const isProvider = app && String(app.applicantId) === req.userId;
     if (!isPoster && !isProvider) return res.status(403).json({ error: 'Not authorized' });
 
-    // Proximity check
-    if (lat !== undefined && lng !== undefined && job.location && job.location.lat) {
+    // Only allow QR handshake when job is in 'accepted' status (ready to start)
+    if (job.status !== 'accepted') {
+      return res.status(400).json({ error: `Cannot start: job is ${job.status}` });
+    }
+
+    // Proximity check (skip for manual completion)
+    if (!manual && lat !== undefined && lng !== undefined && job.location && job.location.lat) {
       const dist = getDistanceKm(parseFloat(lat), parseFloat(lng), job.location.lat, job.location.lng);
       if (dist > QR_PROXIMITY_KM) {
-        return res.status(400).json({ error: `Too far from job location (${dist.toFixed(2)}km)` });
+        return res.status(400).json({ error: `Too far from job location (${dist.toFixed(2)}km). Must be within ${QR_PROXIMITY_KM * 1000}m.` });
       }
     }
 
+    // Idempotency: track who has confirmed via QR
+    job.qrConfirmedBy = job.qrConfirmedBy || [];
+    if (job.qrConfirmedBy.includes(req.userId)) {
+      return res.json({ message: 'QR handshake already recorded by you', awaitingOther: job.qrConfirmedBy.length < 2 });
+    }
+
+    job.qrConfirmedBy.push(req.userId);
+
+    // Log the handshake
     job.qrHandshakes = job.qrHandshakes || [];
     job.qrHandshakes.push({
       scannerId: req.userId,
-      scannedId: scannedUserId,
-      method: 'qr_scan',
+      scannedId: scannedUserId || (isPoster ? (app?.applicantId?.toString?.() || app?.applicantId) : job.posterId.toString()),
+      method: manual ? 'manual' : 'qr_scan',
       scannedAt: new Date()
     });
+
+    const io = req.app.get('io');
+    const room = `job_${job._id}`;
+    const otherUserId = isPoster ? (app?.applicantId?.toString?.() || app?.applicantId) : job.posterId.toString();
+
+    // Emit to room that a handshake was recorded
+    io.to(room).emit('device_handshake_complete', {
+      jobId: String(job._id),
+      confirmedBy: req.userId,
+      awaitingOther: job.qrConfirmedBy.length < 2
+    });
+
+    let jobStarted = false;
+
+    if (job.qrConfirmedBy.length >= 2) {
+      // Both parties have scanned — start the job!
+      job.status = 'in_progress';
+      job.startedAt = new Date();
+      jobStarted = true;
+
+      // Emit job_started to room
+      io.to(room).emit('job_started', {
+        jobId: String(job._id),
+        title: job.title,
+        startedAt: job.startedAt
+      });
+
+      // Notify both parties
+      notify(req, job.posterId, {
+        type: 'job_started',
+        title: 'Job Started 🚀',
+        message: `"${job.title}" has started! Track it in your Active jobs.`,
+        jobId: job._id
+      });
+
+      notify(req, otherUserId, {
+        type: 'job_started',
+        title: 'Job Started 🚀',
+        message: `"${job.title}" has started! Track it in your Active jobs.`,
+        jobId: job._id
+      });
+    } else {
+      // Only one party has scanned — notify the other to scan back
+      notify(req, otherUserId, {
+        type: 'qr_handshake_ready',
+        title: 'QR Handshake Waiting 📱',
+        message: `The other party scanned your QR for "${job.title}". Please scan theirs to start the job.`,
+        jobId: job._id
+      });
+    }
+
     await job.save();
 
-    res.json({ message: 'QR handshake recorded' });
+    res.json({
+      message: jobStarted
+        ? 'Job started! Both parties confirmed.'
+        : 'QR handshake recorded. Awaiting other party.',
+      status: job.status,
+      jobStarted,
+      awaitingOther: !jobStarted
+    });
   } catch (err) {
     console.error('QR handshake error:', err);
     res.status(500).json({ error: 'Server error' });

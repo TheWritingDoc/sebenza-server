@@ -116,6 +116,7 @@ const jobSchema = new mongoose.Schema({
     method: { type: String, default: 'qr_scan' },
     scannedAt: { type: Date, default: Date.now }
   }],
+  qrConfirmedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
   paymentConfirmed: { type: Boolean, default: false },
   paymentConfirmedAt: { type: Date },
   paymentConfirmedBy: [{ type: mongoose.Schema.Types.ObjectId, ref: 'User' }],
