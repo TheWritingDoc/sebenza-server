@@ -14,7 +14,7 @@ const auth = (req, res, next) => {
     return res.status(401).json({ error: 'No token provided' });
   }
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.userId = decoded.userId;
     next();
   } catch (err) {
@@ -235,21 +235,19 @@ router.post('/decline-quote/:id', auth, async (req, res) => {
 });
 
 // Complete transaction with proof images
+// Only the requester (funding buyer) can complete and release escrow.
 router.post('/complete/:id', auth, upload.array('proofImages', 10), async (req, res) => {
   try {
     const { rating, review } = req.body;
 
     const transaction = await Transaction.findOne({
       _id: req.params.id,
-      $or: [
-        { requesterId: req.userId },
-        { providerId: req.userId }
-      ],
+      requesterId: req.userId,
       status: { $in: ['accepted', 'in_progress'] }
     });
 
     if (!transaction) {
-      return res.status(404).json({ error: 'Transaction not found' });
+      return res.status(404).json({ error: 'Transaction not found or not authorized' });
     }
 
     // Handle uploaded proof images
@@ -263,7 +261,7 @@ router.post('/complete/:id', auth, upload.array('proofImages', 10), async (req, 
     if (proofImages.length === 0) {
       return res.status(400).json({ error: 'At least 1 after photo is required. Please upload proof of completed work.' });
     }
-    
+
     transaction.proofImages = [...(transaction.proofImages || []), ...proofImages];
 
     const finalAmount = transaction.negotiatedAmount || transaction.randAmount || 0;
@@ -272,10 +270,21 @@ router.post('/complete/:id', auth, upload.array('proofImages', 10), async (req, 
     if (transaction.paymentMethod === 'escrow') {
       const requester = await User.findById(transaction.requesterId);
       const provider = await User.findById(transaction.providerId);
-      
-      requester.escrowRand = (requester.escrowRand || 0) - finalAmount;
-      provider.randBalance = (provider.randBalance || 0) + finalAmount;
-      provider.totalEarnedRand = (provider.totalEarnedRand || 0) + finalAmount;
+
+      if (!requester || !provider) {
+        return res.status(400).json({ error: 'Requester or provider not found' });
+      }
+
+      // Ensure balances are non-negative and do not exceed escrow held
+      const escrowHeld = requester.escrowRand || 0;
+      const releaseAmount = Math.min(finalAmount, escrowHeld);
+      if (releaseAmount <= 0) {
+        return res.status(400).json({ error: 'No escrow funds to release' });
+      }
+
+      requester.escrowRand = escrowHeld - releaseAmount;
+      provider.randBalance = (provider.randBalance || 0) + releaseAmount;
+      provider.totalEarnedRand = (provider.totalEarnedRand || 0) + releaseAmount;
 
       await requester.save();
       await provider.save();

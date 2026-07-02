@@ -1,10 +1,31 @@
 ﻿const express = require('express');
 const router = express.Router();
+const rateLimit = require('express-rate-limit');
 const SMSVerification = require('../models/SMSVerification');
 const jwt = require('jsonwebtoken');
 
 // In production, use Twilio. For demo, we'll simulate SMS.
 // To use real SMS, set TWILIO_SID, TWILIO_TOKEN, TWILIO_PHONE in .env
+
+// Strict limiter: max 3 send attempts per user per hour
+const smsSendLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 3,
+  keyGenerator: (req) => req.userId || req.ip,
+  message: { error: 'Too many SMS requests. Try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Verify limiter: max 5 attempts per code
+const smsVerifyLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => req.userId || req.ip,
+  message: { error: 'Too many verification attempts. Request a new code.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
 
 const auth = (req, res, next) => {
   const authHeader = req.headers.authorization || '';
@@ -13,7 +34,7 @@ const auth = (req, res, next) => {
     return res.status(401).json({ error: 'No token provided' });
   }
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.userId = decoded.userId;
     next();
   } catch (err) {
@@ -31,7 +52,7 @@ const auth = (req, res, next) => {
 const generateCode = () => Math.floor(100000 + Math.random() * 900000).toString();
 
 // Send SMS verification code
-router.post('/send', auth, async (req, res) => {
+router.post('/send', auth, smsSendLimiter, async (req, res) => {
   try {
     const { phone } = req.body;
     if (!phone) return res.status(400).json({ error: 'Phone number required' });
@@ -57,9 +78,9 @@ router.post('/send', auth, async (req, res) => {
     
     if (isDemo) {
       console.log('Demo mode - SMS code:', code);
-      res.json({ 
-        message: 'Verification code sent (demo mode - check server console)',
-        demoCode: code // Remove in production!
+      res.json({
+        message: 'Verification code sent (demo mode - check server console)'
+        // Never return demoCode to the client, even in demo mode.
       });
     } else {
       // Real Twilio integration would go here
@@ -79,15 +100,21 @@ router.post('/send', auth, async (req, res) => {
 });
 
 // Verify SMS code
-router.post('/verify', auth, async (req, res) => {
+router.post('/verify', auth, smsVerifyLimiter, async (req, res) => {
   try {
     const { phone, code } = req.body;
     if (!phone || !code) return res.status(400).json({ error: 'Phone and code required' });
 
+    // Sanitize input
+    const safeCode = String(code).replace(/\D/g, '').slice(0, 6);
+    if (safeCode.length !== 6) {
+      return res.status(400).json({ error: 'Invalid code format' });
+    }
+
     const sms = await SMSVerification.findOne({
       userId: req.userId,
       phone,
-      code,
+      code: safeCode,
       verified: false,
       expiresAt: { $gt: new Date() }
     });
@@ -98,6 +125,8 @@ router.post('/verify', auth, async (req, res) => {
 
     sms.verified = true;
     await sms.save();
+    // Delete the code once verified to prevent reuse
+    await SMSVerification.deleteMany({ userId: req.userId, phone });
 
     // Update user phone verified status
     const User = require('../models/User');

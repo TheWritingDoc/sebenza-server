@@ -17,7 +17,7 @@ const auth = (req, res, next) => {
     return res.status(401).json({ error: 'No token provided' });
   }
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.userId = decoded.userId;
     next();
   } catch (err) {
@@ -196,7 +196,7 @@ router.get('/', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     let reqUserId = null;
     if (token) {
-      try { reqUserId = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key').userId; } catch (e) {}
+      try { reqUserId = jwt.verify(token, process.env.JWT_SECRET).userId; } catch (e) {}
     }
 
     res.json(paginated.map(j => {
@@ -285,7 +285,7 @@ router.get('/:id', async (req, res) => {
     const token = req.headers.authorization?.split(' ')[1];
     let reqUserId = null;
     if (token) {
-      try { reqUserId = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key').userId; } catch (e) {}
+      try { reqUserId = jwt.verify(token, process.env.JWT_SECRET).userId; } catch (e) {}
     }
 
     // Full detail for poster or accepted applicant
@@ -1120,12 +1120,12 @@ router.post('/:id/payment-handshake', auth, async (req, res) => {
     }
 
     // ── Idempotency: both parties must confirm ──
-    const alreadyConfirmed = job.paymentConfirmedBy || [];
-    if (alreadyConfirmed.includes(req.userId)) {
+    const alreadyConfirmed = (job.paymentConfirmedBy || []).map(String);
+    if (alreadyConfirmed.includes(String(req.userId))) {
       return res.json({ message: 'Payment already confirmed by you', awaitingOther: alreadyConfirmed.length < 2 });
     }
 
-    alreadyConfirmed.push(req.userId);
+    alreadyConfirmed.push(String(req.userId));
     job.paymentConfirmedBy = alreadyConfirmed;
 
     // Log handshake
@@ -1206,13 +1206,14 @@ router.post('/:id/qr-handshake', auth, async (req, res) => {
       }
     }
 
-    // Idempotency: track who has confirmed via QR
+    // Idempotency: track who has confirmed via QR (normalized to strings)
     job.qrConfirmedBy = job.qrConfirmedBy || [];
-    if (job.qrConfirmedBy.includes(req.userId)) {
-      return res.json({ message: 'QR handshake already recorded by you', awaitingOther: job.qrConfirmedBy.length < 2 });
+    const qrConfirmedBy = job.qrConfirmedBy.map(String);
+    if (qrConfirmedBy.includes(String(req.userId))) {
+      return res.json({ message: 'QR handshake already recorded by you', awaitingOther: qrConfirmedBy.length < 2 });
     }
 
-    job.qrConfirmedBy.push(req.userId);
+    job.qrConfirmedBy.push(String(req.userId));
 
     // Log the handshake
     job.qrHandshakes = job.qrHandshakes || [];

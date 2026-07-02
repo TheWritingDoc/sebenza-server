@@ -7,9 +7,13 @@ services:
     startCommand: node index.js
     envVars:
       - key: MONGODB_URI
-        value: mongodb+srv://precisioncodesa_db_user:9k2k0KHisSxlpFsV@ge-shop-cluster.vyixtdm.mongodb.net/gshop?retryWrites=true&w=majority&appName=Ge-Shop-Cluster
+        sync: false
       - key: JWT_SECRET
-        value: gshop-super-secret-key-2026-precisioncode
+        sync: false
+      - key: CORS_ORIGINS
+        # Comma-separated list of allowed origins, e.g.:
+        # https://sebenza-server.onrender.com,https://sebenza.app
+        sync: false
       - key: PORT
         value: 3001
       - key: RENDER

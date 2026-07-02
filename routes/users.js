@@ -8,7 +8,7 @@ const optionalAuth = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
   if (token) {
     try {
-      req.user = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+      req.user = jwt.verify(token, process.env.JWT_SECRET);
       req.isAuthenticated = true;
     } catch {
       req.isAuthenticated = false;
@@ -26,7 +26,7 @@ const auth = (req, res, next) => {
     return res.status(401).json({ error: 'No token provided' });
   }
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.user = decoded;
     next();
   } catch (err) {
@@ -42,9 +42,9 @@ const auth = (req, res, next) => {
 
 router.get('/public', async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 6;
+    const limit = Math.min(parseInt(req.query.limit) || 6, 50);
     const users = await User.find({ email: { $not: /test@/i } })
-      .select('-password -bankAccount')
+      .select('name avatar primaryCategory rating communityStats createdAt')
       .sort({ createdAt: -1 })
       .limit(limit);
     res.json(users);
@@ -58,31 +58,43 @@ router.get('/nearby', optionalAuth, async (req, res) => {
   try {
     const { lat, lng, radius = 50 } = req.query;
     if (!lat || !lng) return res.status(400).json({ error: 'Lat/lng required' });
-    
+    if (isNaN(parseFloat(lat)) || isNaN(parseFloat(lng))) return res.status(400).json({ error: 'Lat/lng must be numbers' });
+    if (parseFloat(radius) > 100) return res.status(400).json({ error: 'Max radius 100km' });
+
     const latNum = parseFloat(lat);
     const lngNum = parseFloat(lng);
     const radiusNum = parseFloat(radius);
-    
+
     const users = await User.find({
       'location.coordinates': { $ne: [0, 0] }
-    }).select('-password -bankAccount');
-    
+    }).select('name avatar primaryCategory rating communityStats location.coordinates createdAt');
+
     const R = 6371;
     const nearbyUsers = users.map(user => {
       const userLat = user.location?.coordinates?.[1];
       const userLng = user.location?.coordinates?.[0];
       if (!userLat || !userLng) return null;
-      
+
       const dLat = (userLat - latNum) * Math.PI / 180;
       const dLng = (userLng - lngNum) * Math.PI / 180;
       const a = Math.sin(dLat/2)**2 + Math.cos(latNum*Math.PI/180)*Math.cos(userLat*Math.PI/180)*Math.sin(dLng/2)**2;
       const distance = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-      
-      return distance <= radiusNum ? { ...user.toObject(), distance: Math.round(distance*10)/10 } : null;
+
+      if (distance > radiusNum) return null;
+      const obj = user.toObject();
+      // Coarsen public location to ~1km for privacy
+      if (obj.location?.coordinates) {
+        obj.location.coordinates = [
+          Math.round(userLng * 100) / 100,
+          Math.round(userLat * 100) / 100
+        ];
+      }
+      obj.distance = Math.round(distance*10)/10;
+      return obj;
     }).filter(Boolean);
-    
+
     nearbyUsers.sort((a,b) => a.distance - b.distance);
-    res.json(nearbyUsers);
+    res.json(nearbyUsers.slice(0, 50));
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch nearby users' });
   }

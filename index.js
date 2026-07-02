@@ -22,7 +22,17 @@ const currency = require('./config/currency');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
+
+// Fail fast in production if secrets are not set from environment
+const isProd = process.env.NODE_ENV === 'production';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (isProd && (!JWT_SECRET || JWT_SECRET === 'your-secret-key')) {
+  console.error('FATAL: JWT_SECRET must be set in production');
+  process.exit(1);
+}
+const effectiveJwtSecret = JWT_SECRET || 'your-secret-key';
+process.env.JWT_SECRET = effectiveJwtSecret; // ensure all routes/middleware use the same secret
+
 
 // Flag to track MongoDB connection status
 let useMongoDB = true;
@@ -74,56 +84,49 @@ const apiLimiter = rateLimit({
   message: { error: 'Too many requests, please slow down' }
 });
 
+// Trust the Render proxy so req.ip and X-Forwarded-For are accurate.
+// Must be set before any middleware that reads the client IP.
+app.set('trust proxy', 1);
+
 app.use('/api/', apiLimiter);
 
-// CORS configuration
+// CORS: explicit allowlist in production. Defaults include the Render URL and localhost for dev.
+const rawCorsOrigins = process.env.CORS_ORIGINS || 'https://sebenza-server.onrender.com,http://localhost:3000,http://localhost:3001,http://localhost:5173';
+const allowedOrigins = new Set(rawCorsOrigins.split(',').map(s => s.trim()).filter(Boolean));
+
 const corsOptions = {
   origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, server-to-server, curl)
     if (!origin) return callback(null, true);
-    if (origin.includes('localhost') || origin.includes('ngrok-free.dev') || origin.includes('ngrok.io')) {
+    if (allowedOrigins.has(origin)) return callback(null, true);
+    // Allow ngrok in non-production environments only
+    if (!isProd && (origin.includes('ngrok-free.dev') || origin.includes('ngrok.io'))) {
       return callback(null, true);
     }
-    callback(null, true);
+    callback(new Error(`CORS blocked: ${origin}`));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-CSRF-Token']
+  allowedHeaders: ['Content-Type', 'Authorization']
 };
 
 // Middleware
 app.use(cors(corsOptions));
 app.use(cookieParser());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
-// CSRF protection for state-changing routes.
-// In production (HTTPS) we need SameSite=None;Secure so the APK / cross-origin
-// clients can send the cookie. Over plain HTTP (local/dev) a Secure cookie is
-// rejected by the browser, which silently breaks login — so fall back to Lax.
-const isProd = process.env.NODE_ENV === 'production';
-const csrfProtection = csrf({
-  cookie: {
-    httpOnly: true,
-    sameSite: isProd ? 'none' : 'lax',
-    secure: isProd
-  }
-});
+// CSRF intentionally removed: this API uses JWT bearer tokens in the Authorization
+// header, which makes CSRF cookie-based protection unnecessary and breaks cross-origin
+// mobile/WebView clients. XSS is mitigated by input validation, Helmet, and CSP.
 
-// Apply CSRF to state-changing routes
-app.use('/api/register', csrfProtection);
-app.use('/api/login', csrfProtection);
-app.use('/api/jobs', csrfProtection);
-app.use('/api/services', csrfProtection);
-app.use('/api/transactions', csrfProtection);
-app.use('/api/users/profile-image', csrfProtection);
-
-// CSRF token endpoint
-app.get('/api/csrf-token', csrfProtection, (req, res) => {
-  res.json({ csrfToken: req.csrfToken() });
-});
-
-// Serve uploads from project root
-app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));
+// Serve public uploads only. KYC documents (ids/selfies) must NOT be public.
+const UPLOADS_BASE = path.join(__dirname, '..', 'uploads');
+app.use('/uploads/profiles', express.static(path.join(UPLOADS_BASE, 'profiles')));
+app.use('/uploads/proof', express.static(path.join(UPLOADS_BASE, 'proof')));
+app.use('/uploads/services', express.static(path.join(UPLOADS_BASE, 'services')));
+app.use('/uploads/jobs', express.static(path.join(UPLOADS_BASE, 'jobs')));
+// ids/selfies are gated below via /api/verification/documents/:type/:filename
 
 // Serve APK downloads with correct MIME type
 app.use('/downloads', express.static(path.join(__dirname, 'downloads'), {
@@ -818,15 +821,24 @@ const httpServer = http.createServer(app);
 
 const io = new Server(httpServer, {
   cors: {
-    origin: (origin, callback) => {
-      if (!origin) return callback(null, true);
-      if (origin.includes('localhost') || origin.includes('ngrok-free.dev') || origin.includes('ngrok.io')) {
-        return callback(null, true);
-      }
-      callback(null, true);
-    },
+    origin: corsOptions.origin,
     methods: ['GET', 'POST'],
     credentials: true
+  }
+});
+
+// Authenticate Socket.IO connections using the same JWT as the HTTP API
+io.use((socket, next) => {
+  try {
+    const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(' ')[1];
+    if (!token || token === 'null' || token === 'undefined') {
+      return next(new Error('Authentication required'));
+    }
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    socket.userId = String(decoded.userId);
+    next();
+  } catch (err) {
+    next(new Error('Authentication failed'));
   }
 });
 
@@ -924,9 +936,38 @@ io.on('connection', (socket) => {
   
   socket.on('join_job_room', async ({ jobId, userId }) => {
     const room = `job_${jobId}`;
+
+    // Authorization: only authenticated socket users can join; verify they are a job party
+    if (!socket.userId) return;
+    const socketUserId = socket.userId;
+
+    let isAuthorized = false;
+    if (mongoConnected && Job) {
+      try {
+        const job = await Job.findById(jobId)
+          .select('posterId status acceptedApplicationId applications')
+          .lean();
+        if (job) {
+          const isPoster = String(job.posterId) === socketUserId;
+          const acceptedApp = job.applications?.find(
+            a => String(a._id) === String(job.acceptedApplicationId)
+          );
+          const isProvider = acceptedApp && String(acceptedApp.applicantId) === socketUserId;
+          isAuthorized = isPoster || isProvider;
+        }
+      } catch (err) {
+        console.error('Job room auth error:', err);
+      }
+    }
+
+    if (!isAuthorized) {
+      socket.emit('error_message', { message: 'Not authorized to join this job room' });
+      return;
+    }
+
     socket.join(room);
     socket.jobRoom = room;
-    console.log(`User ${userId} joined job room ${room}`);
+    console.log(`User ${socketUserId} joined job room ${room}`);
 
     // Cache job data on first join to avoid DB queries on every GPS tick
     if (mongoConnected && Job && !jobLocations.has(jobId)) {

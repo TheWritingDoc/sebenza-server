@@ -1,5 +1,7 @@
 ﻿const express = require('express');
 const router = express.Router();
+const path = require('path');
+const fs = require('fs');
 const upload = require('../middleware/upload');
 const Verification = require('../models/Verification');
 const jwt = require('jsonwebtoken');
@@ -12,7 +14,7 @@ const auth = (req, res, next) => {
     return res.status(401).json({ error: 'No token provided' });
   }
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.userId = decoded.userId;
     next();
   } catch (err) {
@@ -23,6 +25,19 @@ const auth = (req, res, next) => {
       return res.status(401).json({ error: 'Invalid token', code: 'TOKEN_INVALID' });
     }
     res.status(401).json({ error: 'Invalid token' });
+  }
+};
+
+const requireAdmin = async (req, res, next) => {
+  try {
+    const User = require('../models/User');
+    const user = await User.findById(req.userId).select('role');
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: 'Admin access required' });
+    }
+    next();
+  } catch (err) {
+    res.status(500).json({ error: 'Server error' });
   }
 };
 
@@ -80,15 +95,15 @@ router.get('/status', auth, async (req, res) => {
   }
 });
 
-// Admin: Verify user (simplified - in production, add admin auth)
-router.post('/approve/:userId', async (req, res) => {
+// Admin: Verify user
+router.post('/approve/:userId', auth, requireAdmin, async (req, res) => {
   try {
     const verification = await Verification.findOneAndUpdate(
       { userId: req.params.userId },
       { verified: true, verifiedAt: new Date() },
       { new: true }
     );
-    
+
     if (!verification) {
       return res.status(404).json({ error: 'Verification not found' });
     }
@@ -99,6 +114,30 @@ router.post('/approve/:userId', async (req, res) => {
 
     res.json({ message: 'User verified successfully' });
   } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Get my own verification documents (authenticated, ownership checked)
+router.get('/documents/:type', auth, async (req, res) => {
+  try {
+    const { type } = req.params;
+    if (!['idFront', 'idBack', 'selfie'].includes(type)) {
+      return res.status(400).json({ error: 'Invalid document type' });
+    }
+    const verification = await Verification.findOne({ userId: req.userId });
+    if (!verification || !verification[type]) {
+      return res.status(404).json({ error: 'Document not found' });
+    }
+    const filename = verification[type];
+    const folder = type === 'selfie' ? 'selfies' : 'ids';
+    const filePath = path.join(__dirname, '..', 'uploads', folder, filename);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'File not found' });
+    }
+    res.sendFile(filePath);
+  } catch (err) {
+    console.error('Document fetch error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

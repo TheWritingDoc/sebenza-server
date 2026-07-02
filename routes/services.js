@@ -22,7 +22,7 @@ const auth = (req, res, next) => {
     return res.status(401).json({ error: 'No token provided' });
   }
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     req.userId = decoded.userId;
     next();
   } catch (err) {
@@ -76,7 +76,7 @@ router.get('/nearby', auth, async (req, res) => {
     let isAuthenticated = false;
     if (token) {
       try {
-        jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key');
+        jwt.verify(token, process.env.JWT_SECRET);
         isAuthenticated = true;
       } catch (e) { /* invalid token */ }
     }
