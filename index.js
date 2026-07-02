@@ -10,7 +10,6 @@ const path = require('path');
 const rateLimit = require('express-rate-limit');
 const helmet = require('helmet');
 const cookieParser = require('cookie-parser');
-const csrf = require('csurf');
 const { body, validationResult } = require('express-validator');
 
 require('dotenv').config();
@@ -782,10 +781,6 @@ app.use((err, req, res, next) => {
   // File type validation errors
   if (err.message && err.message.includes('Invalid file')) {
     return res.status(400).json({ error: err.message });
-  }
-  // CSRF token failures — return 403 so clients can refresh the token and retry
-  if (err.code === 'EBADCSRFTOKEN') {
-    return res.status(403).json({ error: 'Invalid CSRF token', details: 'csrf' });
   }
   console.error(err.stack);
   res.status(500).json({ error: 'Something went wrong!', details: err.message });

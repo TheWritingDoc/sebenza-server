@@ -72,15 +72,13 @@ router.post('/send', auth, smsSendLimiter, async (req, res) => {
     });
     await sms.save();
 
-    // In production, send real SMS via Twilio
-    // For now, return code in response (NEVER do this in production!)
+    // In production, send real SMS via Twilio. In demo mode, log to console only.
     const isDemo = !process.env.TWILIO_SID;
     
     if (isDemo) {
       console.log('Demo mode - SMS code:', code);
       res.json({
         message: 'Verification code sent (demo mode - check server console)'
-        // Never return demoCode to the client, even in demo mode.
       });
     } else {
       // Real Twilio integration would go here
