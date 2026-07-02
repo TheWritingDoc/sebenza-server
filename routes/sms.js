@@ -1,6 +1,6 @@
 ﻿const express = require('express');
 const router = express.Router();
-const rateLimit = require('express-rate-limit');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const SMSVerification = require('../models/SMSVerification');
 const jwt = require('jsonwebtoken');
 
@@ -11,7 +11,7 @@ const jwt = require('jsonwebtoken');
 const smsSendLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   max: 3,
-  keyGenerator: (req) => req.userId || req.ip,
+  keyGenerator: (req, res) => req.userId || ipKeyGenerator(req, res),
   message: { error: 'Too many SMS requests. Try again later.' },
   standardHeaders: true,
   legacyHeaders: false
@@ -21,7 +21,7 @@ const smsSendLimiter = rateLimit({
 const smsVerifyLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 5,
-  keyGenerator: (req) => req.userId || req.ip,
+  keyGenerator: (req, res) => req.userId || ipKeyGenerator(req, res),
   message: { error: 'Too many verification attempts. Request a new code.' },
   standardHeaders: true,
   legacyHeaders: false
