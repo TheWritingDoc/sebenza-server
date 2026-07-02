@@ -1,6 +1,6 @@
-const CACHE_NAME = 'gshop-v11';
-const STATIC_CACHE = 'gshop-static-v11';
-const API_CACHE = 'gshop-api-v11';
+const CACHE_NAME = 'sebenza-v11';
+const STATIC_CACHE = 'sebenza-static-v11';
+const API_CACHE = 'sebenza-api-v11';
 const MAX_STATIC_ITEMS = 100;
 const MAX_API_ITEMS = 20;
 const API_CACHE_MAX_AGE_MS = 60 * 1000; // 60 seconds max for API responses
