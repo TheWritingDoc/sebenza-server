@@ -1306,4 +1306,11 @@ router.post('/:id/manual-start-permission', auth, async (req, res) => {
   }
 });
 
+// Alias for client code that calls /manual-start-nearby
+router.post('/:id/manual-start-nearby', auth, async (req, res) => {
+  req.url = `/${req.params.id}/manual-start-permission`;
+  req.method = 'POST';
+  router.handle(req, res, () => {});
+});
+
 module.exports = router;
