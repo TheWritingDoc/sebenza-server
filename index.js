@@ -15,6 +15,7 @@ const { body, validationResult } = require('express-validator');
 require('dotenv').config();
 
 const upload = require('./middleware/upload');
+const { whitelistSelf } = require('./lib/atlas-whitelist');
 
 // Import currency configuration
 const currency = require('./config/currency');
@@ -164,8 +165,17 @@ const connectWithRetry = async (retries = 5, delay = 5000) => {
 };
 
 connectWithRetry()
-  .then(() => {
+  .then(async () => {
     mongoConnected = true;
+    // Auto-whitelist the server's public IP in Atlas so API automation works
+    if (process.env.MONGODB_ATLAS_PUBLIC_KEY && process.env.MONGODB_ATLAS_PRIVATE_KEY) {
+      try {
+        const result = await whitelistSelf({ comment: 'Auto-whitelisted on Sebenza server startup' });
+        console.log(`Atlas IP whitelist: ${result.alreadyWhitelisted ? 'already allowed' : 'added'} ${result.ip}`);
+      } catch (err) {
+        console.warn('Atlas auto-whitelist failed (non-fatal):', err.message);
+      }
+    }
   })
   .catch(err => {
     console.error('MongoDB connection failed:', err.message);
@@ -212,6 +222,7 @@ const userRoutes = require('./routes/users');
 const messageRoutes = require('./routes/messages');
 const reviewRoutes = require('./routes/reviews');
 const jobRoutes = require('./routes/jobs');
+const adminRoutes = require('./routes/admin');
 
 
 
@@ -230,6 +241,7 @@ if (useMongoDB) {
   app.use('/api/reviews', reviewRoutes);
   app.use('/api/jobs', jobRoutes);
   app.use('/api/notifications', require('./routes/notifications'));
+  app.use('/api/admin', adminRoutes);
 
   // Versioned routes (v1)
   app.use(`${API_VERSION}/verification`, verificationRoutes);
@@ -241,6 +253,7 @@ if (useMongoDB) {
   app.use(`${API_VERSION}/reviews`, reviewRoutes);
   app.use(`${API_VERSION}/jobs`, jobRoutes);
   app.use(`${API_VERSION}/notifications`, require('./routes/notifications'));
+  app.use(`${API_VERSION}/admin`, adminRoutes);
 
   // DEBUG: test endpoint to verify /api/jobs routing is working
   app.all('/api/jobs/:id/qr-test', (req, res) => {
