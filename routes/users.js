@@ -137,7 +137,7 @@ router.get('/referrer/:code', async (req, res) => {
 router.get('/me/trust', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.userId)
-      .select('trustDocs workExperience profileImage avatar verified phoneVerified communityStats accountType businessName')
+      .select('trustDocs workExperience profileImage avatar verified emailVerified phoneVerified communityStats accountType businessName')
       .lean();
     if (!user) return res.status(404).json({ error: 'User not found' });
     const trust = computeTrust(user);
@@ -156,7 +156,7 @@ router.get('/me/trust', auth, async (req, res) => {
 router.get('/:id/trust', async (req, res) => {
   try {
     const user = await User.findById(req.params.id)
-      .select('trustDocs workExperience profileImage avatar verified phoneVerified communityStats accountType businessName name')
+      .select('trustDocs workExperience profileImage avatar verified emailVerified phoneVerified communityStats accountType businessName name')
       .lean();
     if (!user) return res.status(404).json({ error: 'User not found' });
     const trust = computeTrust(user);
@@ -165,6 +165,7 @@ router.get('/:id/trust', async (req, res) => {
       level: trust.level,
       score: trust.score,
       verified: !!user.verified,
+      emailVerified: !!user.emailVerified,
       phoneVerified: !!user.phoneVerified,
       accountType: user.accountType || 'individual',
       businessName: user.businessName || '',
