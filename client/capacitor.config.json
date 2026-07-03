@@ -1,0 +1,27 @@
+{
+  "appId": "za.co.sebenza.app",
+  "appName": "Sebenza",
+  "webDir": "build",
+  "server": {
+    "url": "https://sebenza-server.onrender.com",
+    "androidScheme": "https",
+    "iosScheme": "https",
+    "allowNavigation": [
+      "sebenza-server.onrender.com",
+      "*.onrender.com",
+      "fonts.googleapis.com",
+      "fonts.gstatic.com"
+    ],
+    "cleartext": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 1200,
+      "backgroundColor": "#6366f1",
+      "showSpinner": false,
+      "androidScaleType": "CENTER_CROP"
+    },
+    "Geolocation": {},
+    "Camera": {}
+  }
+}

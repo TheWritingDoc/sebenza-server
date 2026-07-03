@@ -254,7 +254,7 @@ router.post('/create', auth, upload.array('images', 10), async (req, res) => {
     });
   } catch (err) {
     console.error('Create service error:', err);
-    res.status(500).json({ error: 'Server error creating service', details: err.message });
+    res.status(500).json({ error: 'Server error creating service', ...(process.env.NODE_ENV !== 'production' ? { details: err.message } : {}) });
   }
 });
 
@@ -300,7 +300,7 @@ router.patch('/:serviceId/map-lock', auth, async (req, res) => {
     });
   } catch (err) {
     console.error('Map lock update error:', err);
-    res.status(500).json({ error: 'Server error updating map lock', details: err.message });
+    res.status(500).json({ error: 'Server error updating map lock', ...(process.env.NODE_ENV !== 'production' ? { details: err.message } : {}) });
   }
 });
 
@@ -385,7 +385,7 @@ router.post('/pay-profile-view', auth, async (req, res) => {
     });
   } catch (err) {
     console.error('Pay profile view error:', err);
-    res.status(500).json({ error: 'Server error processing payment', details: err.message });
+    res.status(500).json({ error: 'Server error processing payment', ...(process.env.NODE_ENV !== 'production' ? { details: err.message } : {}) });
   }
 });
 

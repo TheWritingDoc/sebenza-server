@@ -254,7 +254,7 @@ router.post('/', auth, async (req, res) => {
     res.json({ message: 'Review submitted. Thank you for building the community!', review });
   } catch (err) {
     console.error('Review creation error:', err);
-    res.status(500).json({ error: 'Server error', details: err.message });
+    res.status(500).json({ error: 'Server error', ...(process.env.NODE_ENV !== 'production' ? { details: err.message } : {}) });
   }
 });
 

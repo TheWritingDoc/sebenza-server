@@ -91,7 +91,7 @@ router.post('/request', auth, upload.array('jobImages', 10), async (req, res) =>
     });
   } catch (err) {
     console.error('Request error:', err);
-    res.status(500).json({ error: 'Server error', details: err.message });
+    res.status(500).json({ error: 'Server error', ...(process.env.NODE_ENV !== 'production' ? { details: err.message } : {}) });
   }
 });
 
@@ -148,7 +148,7 @@ router.post('/quote/:id', auth, async (req, res) => {
     res.json({ message: 'Quote sent', quotedAmount: quoted });
   } catch (err) {
     console.error('Quote error:', err);
-    res.status(500).json({ error: 'Server error', details: err.message });
+    res.status(500).json({ error: 'Server error', ...(process.env.NODE_ENV !== 'production' ? { details: err.message } : {}) });
   }
 });
 
@@ -201,7 +201,7 @@ router.post('/accept-quote/:id', auth, async (req, res) => {
     res.json({ message: 'Quote accepted', finalAmount: lastQuote.amount });
   } catch (err) {
     console.error('Accept quote error:', err);
-    res.status(500).json({ error: 'Server error', details: err.message });
+    res.status(500).json({ error: 'Server error', ...(process.env.NODE_ENV !== 'production' ? { details: err.message } : {}) });
   }
 });
 
@@ -230,7 +230,7 @@ router.post('/decline-quote/:id', auth, async (req, res) => {
     res.json({ message: 'Quote declined' });
   } catch (err) {
     console.error('Decline quote error:', err);
-    res.status(500).json({ error: 'Server error', details: err.message });
+    res.status(500).json({ error: 'Server error', ...(process.env.NODE_ENV !== 'production' ? { details: err.message } : {}) });
   }
 });
 
@@ -361,7 +361,7 @@ router.post('/complete/:id', auth, upload.array('proofImages', 10), async (req, 
     });
   } catch (err) {
     console.error('Complete error:', err);
-    res.status(500).json({ error: 'Server error', details: err.message });
+    res.status(500).json({ error: 'Server error', ...(process.env.NODE_ENV !== 'production' ? { details: err.message } : {}) });
   }
 });
 
@@ -484,7 +484,7 @@ router.post('/cancel/:id', auth, async (req, res) => {
     res.json({ message: transaction.paymentMethod === 'cash' ? 'Transaction cancelled.' : 'Transaction cancelled. Rand refunded.' });
   } catch (err) {
     console.error('Cancel error:', err);
-    res.status(500).json({ error: 'Server error', details: err.message });
+    res.status(500).json({ error: 'Server error', ...(process.env.NODE_ENV !== 'production' ? { details: err.message } : {}) });
   }
 });
 
@@ -502,7 +502,7 @@ router.get('/my-transactions', auth, async (req, res) => {
     res.json(transactions);
   } catch (err) {
     console.error('My transactions error:', err);
-    res.status(500).json({ error: 'Server error', details: err.message });
+    res.status(500).json({ error: 'Server error', ...(process.env.NODE_ENV !== 'production' ? { details: err.message } : {}) });
   }
 });
 
@@ -520,7 +520,7 @@ router.get('/provider/:providerId/completed', async (req, res) => {
     res.json(transactions);
   } catch (err) {
     console.error('Provider completed error:', err);
-    res.status(500).json({ error: 'Server error', details: err.message });
+    res.status(500).json({ error: 'Server error', ...(process.env.NODE_ENV !== 'production' ? { details: err.message } : {}) });
   }
 });
 

@@ -48,7 +48,7 @@ router.post('/atlas/whitelist-self', auth, requireAdmin, async (req, res) => {
     });
   } catch (err) {
     console.error('Atlas whitelist error:', err.message);
-    res.status(500).json({ error: 'Failed to whitelist IP', details: err.message });
+    res.status(500).json({ error: 'Failed to whitelist IP', ...(process.env.NODE_ENV !== 'production' ? { details: err.message } : {}) });
   }
 });
 

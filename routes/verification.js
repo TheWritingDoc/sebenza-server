@@ -139,8 +139,11 @@ router.get('/documents/:type', auth, async (req, res) => {
     const fileUrl = verification[type];
     if (!fileUrl.startsWith('http')) {
       // Legacy local file fallback: only available when Cloudinary is not enabled.
+      // Use path.basename so a tampered stored value can never traverse out of
+      // the uploads folder (e.g. "../../etc/passwd").
       const folder = type === 'selfie' ? 'selfies' : 'ids';
-      const filePath = path.join(__dirname, '..', 'uploads', folder, fileUrl.replace(/^\/uploads\//, ''));
+      const safeName = path.basename(fileUrl);
+      const filePath = path.join(__dirname, '..', 'uploads', folder, safeName);
       if (!fs.existsSync(filePath)) {
         return res.status(404).json({ error: 'File not found' });
       }
