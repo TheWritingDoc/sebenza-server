@@ -1,9 +1,24 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { TrustStars } from './TrustCenter';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
+
+// Load the tiny qrcodejs lib from CDN once (same pattern as Leaflet in MapView).
+let qrLibPromise = null;
+function loadQrLib() {
+  if (window.QRCode) return Promise.resolve(window.QRCode);
+  if (qrLibPromise) return qrLibPromise;
+  qrLibPromise = new Promise((resolve, reject) => {
+    const js = document.createElement('script');
+    js.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
+    js.onload = () => resolve(window.QRCode);
+    js.onerror = reject;
+    document.head.appendChild(js);
+  });
+  return qrLibPromise;
+}
 
 function TeamManager({ user }) {
   const navigate = useNavigate();
@@ -22,6 +37,14 @@ function TeamManager({ user }) {
   const [teamType, setTeamType] = useState('team');
   // Invite form
   const [inviteEmail, setInviteEmail] = useState('');
+  // QR check-in (supervisor shows, member scans/types)
+  const [qr, setQr] = useState(null); // {code, payload, expiresAt, ttlMinutes}
+  const [scanning, setScanning] = useState(false);
+  const [manualCode, setManualCode] = useState('');
+  const [myRole, setMyRole] = useState('');
+  const qrBoxRef = useRef(null);
+  const videoRef = useRef(null);
+  const scanStopRef = useRef(null);
 
   const load = useCallback(async () => {
     try {
@@ -91,6 +114,74 @@ function TeamManager({ user }) {
       flash('You left the team'); setTeam(null); setRole(null);
     } catch (err) { flash(err.response?.data?.error || 'Failed'); }
     setBusy(false);
+  };
+
+  // Supervisor: generate + render the QR
+  const showQr = async () => {
+    setBusy(true);
+    try {
+      const res = await axios.post(`${API_URL}/api/teams/${team._id}/qr`, {}, H);
+      setQr(res.data);
+      const QRCode = await loadQrLib();
+      setTimeout(() => {
+        if (qrBoxRef.current) {
+          qrBoxRef.current.innerHTML = '';
+          new QRCode(qrBoxRef.current, { text: res.data.payload, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+        }
+      }, 50);
+    } catch (err) { flash(err.response?.data?.error || 'Could not generate QR'); }
+    setBusy(false);
+  };
+
+  const stopScan = useCallback(() => {
+    if (scanStopRef.current) { scanStopRef.current(); scanStopRef.current = null; }
+    setScanning(false);
+  }, []);
+  useEffect(() => stopScan, [stopScan]); // clean up camera on unmount
+
+  const confirmQr = async (payloadOrCode) => {
+    stopScan();
+    setBusy(true);
+    try {
+      const res = await axios.post(`${API_URL}/api/teams/confirm-qr`, { payload: payloadOrCode, role: myRole }, H);
+      flash('✅ ' + res.data.message);
+      setManualCode('');
+      await load();
+    } catch (err) { flash(err.response?.data?.error || 'Confirmation failed'); }
+    setBusy(false);
+  };
+
+  // Member: scan with the camera (BarcodeDetector) — falls back to typing the code.
+  const startScan = async () => {
+    if (!('BarcodeDetector' in window)) {
+      flash('Camera scanning is not supported here — type the code instead');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      setScanning(true);
+      const detector = new window.BarcodeDetector({ formats: ['qr_code'] });
+      let active = true;
+      scanStopRef.current = () => { active = false; stream.getTracks().forEach(t => t.stop()); };
+      // Wait for the video element to mount, then attach + poll
+      setTimeout(async () => {
+        if (!active || !videoRef.current) return;
+        videoRef.current.srcObject = stream;
+        await videoRef.current.play().catch(() => {});
+        const tick = async () => {
+          if (!active || !videoRef.current) return;
+          try {
+            const codes = await detector.detect(videoRef.current);
+            const hit = codes.find(c => (c.rawValue || '').startsWith('SEBENZA-TEAM:'));
+            if (hit) { confirmQr(hit.rawValue); return; }
+          } catch (e) { /* keep polling */ }
+          setTimeout(tick, 400);
+        };
+        tick();
+      }, 100);
+    } catch (err) {
+      flash('Camera unavailable — type the code instead');
+    }
   };
 
   const card = { background: 'white', borderRadius: 16, padding: 20, boxShadow: '0 2px 8px rgba(0,0,0,0.06)', marginBottom: 16 };
@@ -167,6 +258,26 @@ function TeamManager({ user }) {
           </div>
 
           <div style={card}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 4px' }}>📷 On-site QR check-in</h3>
+            <p style={{ fontSize: 13, color: '#64748b', margin: '0 0 12px' }}>
+              Show this QR to a member on site — they scan it to confirm you're working together (and their role).
+            </p>
+            {!qr && (
+              <button disabled={busy} onClick={showQr} style={{ ...btn('linear-gradient(135deg,#0ea5e9,#0284c7)'), width: '100%' }}>Show QR Code</button>
+            )}
+            {qr && (
+              <div style={{ textAlign: 'center' }}>
+                <div ref={qrBoxRef} style={{ display: 'inline-block', padding: 12, background: 'white', border: '1px solid #e2e8f0', borderRadius: 12 }} />
+                <div style={{ fontSize: 22, fontWeight: 800, letterSpacing: 4, color: '#1e293b', marginTop: 10 }}>{qr.code}</div>
+                <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>
+                  Or they can type this code · valid {qr.ttlMinutes} minutes
+                </div>
+                <button disabled={busy} onClick={showQr} style={{ ...btn('#f1f5f9'), color: '#475569', marginTop: 10, minHeight: 40 }}>↻ New code</button>
+              </div>
+            )}
+          </div>
+
+          <div style={card}>
             <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 10px' }}>Members</h3>
             {activeMembers.length === 0 && pendingMembers.length === 0 && (
               <p style={{ fontSize: 13, color: '#94a3b8' }}>No members yet — invite someone above.</p>
@@ -176,6 +287,11 @@ function TeamManager({ user }) {
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 700, color: '#1e293b' }}>{m.userId?.name || m.name}</div>
                   {m.userId?.trustStars != null && <TrustStars stars={m.userId.trustStars} size={13} />}
+                  {m.qrConfirmedAt && (
+                    <div style={{ fontSize: 11, color: '#166534', fontWeight: 700, marginTop: 2 }}>
+                      ✅ On-site confirmed{m.confirmedRole ? ` · ${m.confirmedRole}` : ''} · {new Date(m.qrConfirmedAt).toLocaleDateString()}
+                    </div>
+                  )}
                 </div>
                 <button disabled={busy} onClick={() => removeMember(m.userId?._id || m.userId)} style={{ ...btn('#fef2f2'), color: '#dc2626', minHeight: 40 }}>Remove</button>
               </div>
@@ -193,15 +309,46 @@ function TeamManager({ user }) {
       )}
 
       {/* I'm a member of someone's team */}
-      {team && role === 'member' && (
-        <div style={card}>
-          <h3 style={{ fontSize: 18, fontWeight: 800, margin: '0 0 4px' }}>{team.name}</h3>
-          <p style={{ fontSize: 13, color: '#64748b', margin: '0 0 12px' }}>
-            You work under {team.supervisorId?.businessName || team.supervisorId?.name || 'your supervisor'}.
-          </p>
-          <button disabled={busy} onClick={leave} style={{ ...btn('#fef2f2'), color: '#dc2626', width: '100%' }}>Leave Team</button>
-        </div>
-      )}
+      {team && role === 'member' && (() => {
+        const myRecord = (team.members || []).find(m => String(m.userId?._id || m.userId) === String(user?._id || user?.id));
+        return (
+          <>
+            <div style={card}>
+              <h3 style={{ fontSize: 18, fontWeight: 800, margin: '0 0 4px' }}>{team.name}</h3>
+              <p style={{ fontSize: 13, color: '#64748b', margin: '0 0 12px' }}>
+                You work under {team.supervisorId?.businessName || team.supervisorId?.name || 'your supervisor'}.
+              </p>
+              {myRecord?.qrConfirmedAt && (
+                <div style={{ background: '#f0fdf4', color: '#166534', padding: '10px 12px', borderRadius: 12, fontSize: 13, fontWeight: 700, marginBottom: 12 }}>
+                  ✅ On-site confirmed{myRecord.confirmedRole ? ` as ${myRecord.confirmedRole}` : ''} · {new Date(myRecord.qrConfirmedAt).toLocaleDateString()}
+                </div>
+              )}
+              <button disabled={busy} onClick={leave} style={{ ...btn('#fef2f2'), color: '#dc2626', width: '100%' }}>Leave Team</button>
+            </div>
+
+            <div style={card}>
+              <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 4px' }}>📷 Confirm you're working together</h3>
+              <p style={{ fontSize: 13, color: '#64748b', margin: '0 0 12px' }}>
+                Scan your supervisor's QR code on site, or type the code they show you. Adding your role is optional.
+              </p>
+              <input style={{ ...input, marginBottom: 10 }} placeholder="Your role today (optional, e.g. Painter)" value={myRole} onChange={e => setMyRole(e.target.value)} maxLength={60} />
+              {scanning ? (
+                <div style={{ textAlign: 'center' }}>
+                  <video ref={videoRef} muted playsInline style={{ width: '100%', maxHeight: 280, borderRadius: 12, background: '#000', objectFit: 'cover' }} />
+                  <button onClick={stopScan} style={{ ...btn('#f1f5f9'), color: '#475569', width: '100%', marginTop: 10 }}>Stop scanning</button>
+                </div>
+              ) : (
+                <button disabled={busy} onClick={startScan} style={{ ...btn('linear-gradient(135deg,#0ea5e9,#0284c7)'), width: '100%', marginBottom: 10 }}>📷 Scan QR Code</button>
+              )}
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: scanning ? 10 : 0 }}>
+                <input style={{ ...input, flex: 1, minWidth: 140, textTransform: 'uppercase', letterSpacing: 2 }} placeholder="or type code"
+                  value={manualCode} onChange={e => setManualCode(e.target.value.toUpperCase())} maxLength={10} />
+                <button disabled={busy || !manualCode.trim()} onClick={() => confirmQr(manualCode.trim())} style={btn('linear-gradient(135deg,#22c55e,#16a34a)')}>Confirm</button>
+              </div>
+            </div>
+          </>
+        );
+      })()}
     </div>
   );
 }

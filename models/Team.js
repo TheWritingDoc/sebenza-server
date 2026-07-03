@@ -20,8 +20,18 @@ const teamSchema = new mongoose.Schema({
     role: { type: String, enum: ['member', 'lead'], default: 'member' },
     status: { type: String, enum: ['invited', 'active', 'declined', 'removed'], default: 'invited' },
     invitedAt: { type: Date, default: Date.now },
-    joinedAt: { type: Date }
+    joinedAt: { type: Date },
+    // On-site QR check-in: member scanned the supervisor's QR to confirm they
+    // are working together (optionally stating their role that day).
+    qrConfirmedAt: { type: Date },
+    confirmedRole: { type: String, default: '', maxlength: 60, trim: true }
   }],
+
+  // Active QR check-in session (one at a time, short-lived, supervisor-generated)
+  qrSession: {
+    code: { type: String, default: '' },
+    expiresAt: { type: Date }
+  },
 
   // Business location for the always-on map pin (Phase 6)
   location: { lat: Number, lng: Number },

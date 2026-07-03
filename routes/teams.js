@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const Team = require('../models/Team');
 const User = require('../models/User');
 const { sendNotification } = require('../utils/notifications');
+const { CODE_TTL_MS, genTeamCode, buildQrPayload, parseQrPayload, isCodeValid } = require('../utils/teamQr');
 
 const auth = (req, res, next) => {
   const token = (req.headers.authorization || '').split(' ')[1];
@@ -28,6 +29,7 @@ function notify(req, userId, payload) {
 function teamDTO(team) {
   const t = team.toObject ? team.toObject() : team;
   t.activeMemberCount = (t.members || []).filter(m => m.status === 'active').length;
+  delete t.qrSession; // active check-in code is only returned by POST /:id/qr to the supervisor
   return t;
 }
 
@@ -188,6 +190,71 @@ router.post('/:id/respond', auth, async (req, res) => {
     }
   } catch (err) {
     console.error('Respond invite error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Supervisor generates a short-lived QR check-in code for on-site confirmation.
+router.post('/:id/qr', auth, async (req, res) => {
+  try {
+    const team = await Team.findOne({ _id: req.params.id, supervisorId: req.userId });
+    if (!team) return res.status(404).json({ error: 'Team not found or not yours' });
+
+    const code = genTeamCode();
+    const expiresAt = new Date(Date.now() + CODE_TTL_MS);
+    team.qrSession = { code, expiresAt };
+    await team.save();
+
+    res.json({
+      code,
+      expiresAt,
+      payload: buildQrPayload(team._id, code),
+      ttlMinutes: Math.round(CODE_TTL_MS / 60000),
+    });
+  } catch (err) {
+    console.error('QR generate error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Member confirms the on-site QR handshake (scanned payload or typed code).
+// Optional `role` is a free-text label for what they're doing that day.
+router.post('/confirm-qr', auth, async (req, res) => {
+  try {
+    const parsed = parseQrPayload(req.body.payload || req.body.code || '');
+    if (!parsed) return res.status(400).json({ error: 'That QR code is not a Sebenza team code' });
+
+    // Bare typed codes resolve against the team the member belongs to.
+    const team = parsed.teamId
+      ? await Team.findById(parsed.teamId)
+      : await Team.findOne({ 'members.userId': req.userId, 'members.status': 'active' });
+    if (!team) return res.status(404).json({ error: 'Team not found' });
+
+    if (!isCodeValid(team, parsed.code)) {
+      return res.status(400).json({ error: 'Code is wrong or has expired — ask your supervisor to show a fresh QR' });
+    }
+    if (String(team.supervisorId) === String(req.userId)) {
+      return res.status(400).json({ error: "You're the supervisor — members scan this to confirm they work with you" });
+    }
+
+    const member = team.members.find(m => String(m.userId) === String(req.userId) && m.status === 'active');
+    if (!member) return res.status(403).json({ error: 'Only active team members can confirm. Accept the invite first.' });
+
+    member.qrConfirmedAt = new Date();
+    if (typeof req.body.role === 'string' && req.body.role.trim()) {
+      member.confirmedRole = req.body.role.trim().slice(0, 60);
+    }
+    await team.save();
+
+    const me = await User.findById(req.userId).select('name');
+    notify(req, team.supervisorId, {
+      type: 'team_qr_confirmed',
+      title: 'On-Site Confirmed ✅',
+      message: `${me?.name || 'A member'} scanned your QR${member.confirmedRole ? ` as ${member.confirmedRole}` : ''} — you're confirmed working together.`,
+    });
+    res.json({ message: `Confirmed — you're working with ${team.name}`, team: teamDTO(team) });
+  } catch (err) {
+    console.error('QR confirm error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
