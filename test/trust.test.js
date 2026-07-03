@@ -10,24 +10,25 @@ function test(name, fn) {
 
 console.log('\n🧪  identity trust-star tests\n');
 
-test('fresh signup: account only = 0.5 star minimum, 10 points', () => {
+test('fresh signup: account only = 0.5 star minimum floor', () => {
   const t = computeTrust({});
-  assert.strictEqual(t.score, 10);
   assert.strictEqual(t.stars, 0.5);
   assert.strictEqual(t.level, 'New Neighbour');
   assert.strictEqual(t.checklist.find(c => c.key === 'account').done, true);
 });
 
-test('phone verified adds 15 -> 25 pts, level Getting Started', () => {
-  const t = computeTrust({ phoneVerified: true });
-  assert.strictEqual(t.score, 25);
-  assert.strictEqual(t.level, 'Getting Started');
+test('email verification is an identity item worth points', () => {
+  const base = computeTrust({}).score;
+  const withEmail = computeTrust({ emailVerified: true }).score;
+  assert.ok(withEmail > base, 'verifying email should raise the score');
+  assert.strictEqual(computeTrust({ emailVerified: true }).checklist.find(c => c.key === 'email').done, true);
 });
 
-test('KYC verified is the biggest single boost (+30)', () => {
-  const base = computeTrust({}).score;
-  const withId = computeTrust({ verified: true }).score;
-  assert.strictEqual(withId - base, 30);
+test('KYC ID is the single biggest boost item', () => {
+  const idItem = computeTrust({}).checklist.find(c => c.key === 'id');
+  const maxOther = Math.max(...computeTrust({}).checklist.filter(c => c.key !== 'id').map(c => c.points));
+  assert.ok(idItem.points > maxOther, 'ID must be the biggest single item');
+  assert.strictEqual(computeTrust({ verified: true }).checklist.find(c => c.key === 'id').done, true);
 });
 
 test('profile photo counts via profileImage or avatar', () => {
@@ -51,9 +52,9 @@ test('firstJob satisfied by communityStats.jobsCompleted >= 1', () => {
   assert.strictEqual(computeTrust({ communityStats: { jobsCompleted: 3 } }).checklist.find(c=>c.key==='firstJob').done, true);
 });
 
-test('fully verified profile = 100 pts, 5 stars, Fully Verified', () => {
+test('fully verified profile = 100 score, 5 stars, Fully Verified', () => {
   const t = computeTrust({
-    profileImage: '/me.jpg', phoneVerified: true, verified: true,
+    emailVerified: true, profileImage: '/me.jpg', phoneVerified: true, verified: true,
     trustDocs: [
       { docType: 'address', status: 'approved' },
       { docType: 'qualification', status: 'approved' },

@@ -6,6 +6,9 @@ const jwt = require('jsonwebtoken');
 const upload = require('../middleware/upload');
 const { uploadFile } = require('../middleware/upload');
 const { computeTrust, refreshTrust } = require('../utils/trustScore');
+const { sendVerificationEmail } = require('../utils/email');
+
+const genCode = () => Math.floor(100000 + Math.random() * 900000).toString();
 
 const optionalAuth = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
@@ -223,6 +226,66 @@ router.post('/work-experience', auth, async (req, res) => {
     res.json({ message: 'Experience added', stars: trust?.stars, level: trust?.level, score: trust?.score });
   } catch (err) {
     console.error('Work experience error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ===== EMAIL VERIFICATION =====
+// Registration already requires an email; this lets the user prove it's theirs
+// (a verifiable contact channel — phone OR email). A 6-digit code mirrors the
+// SMS flow and works inside the native app without email deep-links. Demo mode
+// (no SMTP creds) returns the code so the flow is testable immediately.
+
+// Send / resend an email verification code to the signed-in user's address
+router.post('/send-email-code', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId).select('email emailVerified');
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.emailVerified) return res.json({ message: 'Email already verified', alreadyVerified: true });
+
+    const code = genCode();
+    await User.findByIdAndUpdate(req.user.userId, {
+      emailVerificationToken: code,
+      emailVerificationExpires: new Date(Date.now() + 15 * 60 * 1000),
+    });
+    const result = await sendVerificationEmail(user.email, code);
+    res.json({
+      message: result.demo ? 'Verification code generated (demo mode)' : 'Verification code sent to your email',
+      demo: result.demo || false,
+      ...(result.demo ? { code: result.code } : {}), // demo only, for testing
+    });
+  } catch (err) {
+    console.error('Send email code error:', err);
+    res.status(500).json({ error: 'Failed to send verification email' });
+  }
+});
+
+// Verify the email code -> set emailVerified + refresh trust stars
+router.post('/verify-email-code', auth, async (req, res) => {
+  try {
+    const { code } = req.body;
+    const safe = String(code || '').replace(/\D/g, '').slice(0, 6);
+    if (safe.length !== 6) return res.status(400).json({ error: 'Invalid code format' });
+
+    const user = await User.findById(req.user.userId).select('emailVerificationToken emailVerificationExpires emailVerified');
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (user.emailVerified) return res.json({ message: 'Email already verified' });
+    if (!user.emailVerificationToken || user.emailVerificationToken !== safe) {
+      return res.status(400).json({ error: 'Incorrect code' });
+    }
+    if (!user.emailVerificationExpires || user.emailVerificationExpires < new Date()) {
+      return res.status(400).json({ error: 'Code expired — request a new one' });
+    }
+
+    await User.findByIdAndUpdate(req.user.userId, {
+      emailVerified: true,
+      emailVerificationToken: null,
+      emailVerificationExpires: null,
+    });
+    const trust = await refreshTrust(User, req.user.userId);
+    res.json({ message: 'Email verified', stars: trust?.stars, level: trust?.level, score: trust?.score });
+  } catch (err) {
+    console.error('Verify email code error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

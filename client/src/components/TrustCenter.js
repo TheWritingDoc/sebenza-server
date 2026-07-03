@@ -29,6 +29,7 @@ export function TrustStars({ stars, size = 18 }) {
 
 const ITEM_META = {
   account:       { icon: '✅', hint: 'Done — welcome to the community!' },
+  email:         { icon: '✉️', hint: 'Verify your email with a code' },
   photo:         { icon: '📸', hint: 'Add a clear photo of your face' },
   phone:         { icon: '📱', hint: 'Verify with a one-time SMS code' },
   id:            { icon: '🪪', hint: 'Upload your SA ID — biggest trust boost' },
@@ -169,6 +170,81 @@ function ExperienceForm({ onDone }) {
   );
 }
 
+function EmailStep({ onDone }) {
+  const [stage, setStage] = useState('send'); // 'send' | 'code'
+  const [code, setCode] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
+  const [demoCode, setDemoCode] = useState('');
+  const token = localStorage.getItem('token');
+
+  const sendCode = async () => {
+    setLoading(true); setMessage('');
+    try {
+      const res = await axios.post(`${API_URL}/api/users/send-email-code`, {}, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (res.data.alreadyVerified) { onDone(); return; }
+      if (res.data.demo && res.data.code) setDemoCode(res.data.code);
+      setStage('code');
+      setMessage(res.data.demo ? '' : '✅ Code sent — check your inbox.');
+    } catch (err) {
+      setMessage(err.response?.data?.error || 'Could not send the code');
+    }
+    setLoading(false);
+  };
+
+  const verify = async () => {
+    if (code.replace(/\D/g, '').length !== 6) { setMessage('Enter the 6-digit code'); return; }
+    setLoading(true); setMessage('');
+    try {
+      await axios.post(`${API_URL}/api/users/verify-email-code`, { code }, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setMessage('✅ Email verified!');
+      setTimeout(onDone, 900);
+    } catch (err) {
+      setMessage(err.response?.data?.error || 'Verification failed');
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-4">
+      {message && (
+        <div className={`p-3 rounded-xl text-center text-sm font-medium ${message.startsWith('✅') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+          {message}
+        </div>
+      )}
+      {stage === 'send' ? (
+        <button onClick={sendCode} disabled={loading}
+          className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 disabled:bg-gray-300 transition-all text-sm">
+          {loading ? 'Sending...' : 'Send me a code'}
+        </button>
+      ) : (
+        <>
+          {demoCode && (
+            <div className="p-3 rounded-xl bg-amber-50 text-amber-700 text-center text-sm">
+              Demo mode — your code is <strong>{demoCode}</strong>
+            </div>
+          )}
+          <input inputMode="numeric" value={code} onChange={e => setCode(e.target.value)}
+            className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 text-center tracking-widest text-lg"
+            placeholder="000000" maxLength={6} />
+          <button onClick={verify} disabled={loading}
+            className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 disabled:bg-gray-300 transition-all text-sm">
+            {loading ? 'Verifying...' : 'Verify Email'}
+          </button>
+          <button onClick={sendCode} disabled={loading}
+            className="w-full text-blue-600 py-2 text-sm font-semibold">
+            Resend code
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
 function PhoneStep({ user, onDone }) {
   const stored = (() => { try { return JSON.parse(localStorage.getItem('sebenza_user') || localStorage.getItem('gshop_user') || '{}'); } catch { return {}; } })();
   const [phone, setPhone] = useState(stored.phone || user?.phone || '');
@@ -250,6 +326,7 @@ function TrustCenter({ user, setUser }) {
             <p className="text-gray-500 text-sm mt-1">{meta.hint}</p>
           </div>
 
+          {active === 'email' && <EmailStep onDone={closeStep} />}
           {active === 'phone' && <PhoneStep user={user} onDone={handlePhoneVerified} />}
           {active === 'id' && <Verification embedded onStatusChange={closeStep} />}
           {active === 'address' && <DocUpload docType="address" label="Proof of address" onDone={closeStep} />}

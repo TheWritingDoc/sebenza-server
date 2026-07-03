@@ -12,18 +12,22 @@
  * visible minimum star and climb as they add verifications/documents.
  */
 
-// Each identity item and the points it contributes. Totals to 100.
-// Keys match the client checklist in TrustCenter.js / PublicProfile.js.
+// Each identity item and the raw points it contributes. The displayed score is
+// normalised to 0–100 against the sum of all points, so items can be added
+// without fragile rebalancing. Keys match the client checklist.
 const TRUST_ITEMS = [
   { key: 'account',       label: 'Join the community',   points: 10, action: null,            auto: true },
+  { key: 'email',         label: 'Verify your email',    points: 10, action: 'email' },
   { key: 'photo',         label: 'Add a profile photo',  points: 10, action: 'photo' },
-  { key: 'phone',         label: 'Verify your phone',    points: 15, action: 'phone' },
+  { key: 'phone',         label: 'Verify your phone',    points: 10, action: 'phone' },
   { key: 'id',            label: 'Verify your ID',       points: 30, action: 'id' },
   { key: 'address',       label: 'Proof of address',     points: 10, action: 'address' },
   { key: 'qualification', label: 'Add a qualification',  points: 10, action: 'qualification' },
   { key: 'experience',    label: 'Add work experience',  points: 10, action: 'experience' },
   { key: 'firstJob',      label: 'Complete a job',       points: 5,  action: null,            auto: true },
 ];
+
+const TOTAL_POINTS = TRUST_ITEMS.reduce((s, i) => s + i.points, 0);
 
 function hasApprovedOrPendingDoc(user, docType) {
   return Array.isArray(user.trustDocs) &&
@@ -34,6 +38,7 @@ function hasApprovedOrPendingDoc(user, docType) {
 function isItemDone(user, key) {
   switch (key) {
     case 'account':       return true; // registered = done
+    case 'email':         return !!user.emailVerified;
     case 'photo':         return !!(user.profileImage || user.avatar);
     case 'phone':         return !!user.phoneVerified;
     case 'id':            return !!user.verified; // set true when KYC is approved
@@ -62,16 +67,18 @@ function levelForScore(score) {
 function computeTrust(user) {
   if (!user) return { score: 0, stars: 0, level: 'New Neighbour', checklist: [] };
 
-  let score = 0;
+  let earned = 0;
   const checklist = TRUST_ITEMS.map(item => {
     const done = isItemDone(user, item.key);
-    if (done) score += item.points;
+    if (done) earned += item.points;
     return { key: item.key, label: item.label, points: item.points, action: item.action, done };
   });
 
-  score = Math.max(0, Math.min(100, score));
-  // Map 0–100 → 0–5 stars, rounded to the nearest half star.
-  const stars = Math.round((score / 100) * 5 * 2) / 2;
+  // Normalise earned points to a 0–100 score against the total available,
+  // then map to 0–5 stars (nearest half star). Account is always done, so the
+  // floor is a visible ~0.5 star at sign-in.
+  const score = Math.round((earned / TOTAL_POINTS) * 100);
+  const stars = Math.round((earned / TOTAL_POINTS) * 5 * 2) / 2;
 
   return { score, stars, level: levelForScore(score), checklist };
 }
