@@ -713,8 +713,8 @@ function PostJobModal({ user, onClose, onPosted }) {
                 </div>
               </div>
               <button onClick={handleBack} style={{
-                padding: '6px 12px', borderRadius: 10, border: 'none', fontSize: 12, fontWeight: 700, cursor: 'pointer',
-                background: '#e2e8f0', color: '#475569',
+                padding: '0 16px', minHeight: 44, borderRadius: 10, border: 'none', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                background: '#e2e8f0', color: '#475569', flexShrink: 0,
               }}>Edit</button>
             </div>
 

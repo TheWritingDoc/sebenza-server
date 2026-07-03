@@ -726,12 +726,13 @@ export default function NotificationSystem({ user, socket, panelOpen: controlled
                 onClick={(e) => { e.stopPropagation(); dismissToast(toast.toastId); }}
                 style={{
                   background: 'none', border: 'none', color: '#94a3b8',
-                  cursor: 'pointer', fontSize: '16px', padding: '2px', flexShrink: 0, lineHeight: 1,
-                  display: 'flex', alignItems: 'center', borderRadius: '4px',
+                  cursor: 'pointer', fontSize: '16px', flexShrink: 0, lineHeight: 1,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  width: '40px', height: '40px', borderRadius: '8px', margin: '-8px -8px -8px 0',
                 }}
                 aria-label="Dismiss"
               >
-                <X size={16} />
+                <X size={18} />
               </button>
             </div>
           );
