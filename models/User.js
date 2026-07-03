@@ -110,9 +110,16 @@ const userSchema = new mongoose.Schema({
   businessName: { type: String, default: '' },   // team or business display name
   teamSize: { type: Number, default: 1 },
 
-  // Trust documents — each upload raises the user's trust score
+  // Identity trust stars (0–5) — computed by utils/trustScore from the
+  // verifications/documents below. SEPARATE from review performance. Cached
+  // here so job cards / map pins / profiles can show them without recomputing.
+  trustStars: { type: Number, default: 0.5, min: 0, max: 5 },
+  trustScore: { type: Number, default: 10, min: 0, max: 100 },
+  trustLevel: { type: String, default: 'New Neighbour' },
+
+  // Trust documents — each upload raises the user's identity trust score
   trustDocs: [{
-    docType: { type: String, enum: ['address', 'qualification', 'experience'], required: true },
+    docType: { type: String, enum: ['address', 'id', 'drivers_license', 'qualification', 'experience'], required: true },
     title: { type: String, default: '' },
     fileUrl: { type: String, default: '' },
     status: { type: String, enum: ['pending', 'approved', 'rejected'], default: 'pending' },

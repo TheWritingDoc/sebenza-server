@@ -145,6 +145,13 @@ async function recalculateUserStats(userId) {
       jobsRequested
     };
     await user.save();
+
+    // Completing a first job satisfies the "firstJob" identity item — keep the
+    // cached trust stars in sync (score itself always recomputes live too).
+    try {
+      const { refreshTrust } = require('../utils/trustScore');
+      await refreshTrust(User, userId);
+    } catch (e) { console.error('Trust refresh (job) failed:', e.message); }
   }
 
   return { givenAvg, receivedAvg, complainerScore, reliabilityScore };

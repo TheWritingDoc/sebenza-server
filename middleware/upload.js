@@ -30,7 +30,9 @@ if (!cloudinaryEnabled) {
     path.join(UPLOADS_BASE, 'selfies'),
     path.join(UPLOADS_BASE, 'profiles'),
     path.join(UPLOADS_BASE, 'services'),
-    path.join(UPLOADS_BASE, 'jobs')
+    path.join(UPLOADS_BASE, 'jobs'),
+    path.join(UPLOADS_BASE, 'trust'),
+    path.join(UPLOADS_BASE, 'misc')
   ];
   dirs.forEach(dir => {
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
@@ -82,6 +84,7 @@ function resolveFolder(fieldname) {
   if (['proofImages', 'completionPhotos', 'workProofPhotos', 'photos', 'stopPhotos'].includes(fieldname)) return 'proof';
   if (fieldname === 'jobImages' || fieldname === 'jobPostImages' || fieldname === 'issuePhotos') return 'jobs';
   if (fieldname === 'images') return 'services';
+  if (fieldname === 'trustDoc') return 'trust';
   return 'misc';
 }
 

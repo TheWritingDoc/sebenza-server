@@ -565,7 +565,11 @@ app.post('/api/users/profile-image', auth, upload.single('profileImage'), async 
       { new: true }
     );
 
-    
+    // Adding a face photo raises identity trust stars
+    try {
+      const { refreshTrust } = require('./utils/trustScore');
+      await refreshTrust(User, req.userId);
+    } catch (e) { console.error('Trust refresh (photo) failed:', e.message); }
 
     res.json({
       message: 'Profile image uploaded successfully',

@@ -115,9 +115,13 @@ router.post('/approve/:userId', auth, requireAdmin, async (req, res) => {
       return res.status(404).json({ error: 'Verification not found' });
     }
 
-    // Update user verified status
+    // Update user verified status and refresh identity trust stars (ID = +30)
     const User = require('../models/User');
     await User.findByIdAndUpdate(req.params.userId, { verified: true });
+    try {
+      const { refreshTrust } = require('../utils/trustScore');
+      await refreshTrust(User, req.params.userId);
+    } catch (e) { console.error('Trust refresh (KYC) failed:', e.message); }
 
     res.json({ message: 'User verified successfully' });
   } catch (err) {

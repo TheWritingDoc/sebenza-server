@@ -1,0 +1,96 @@
+/**
+ * Identity Trust Score — SEPARATE from job/review performance.
+ *
+ * These stars answer one question only: "how well has this person proven who
+ * they are?" They exist to encourage users to provide identification so both
+ * sides feel safe. They are NOT a quality/review rating (that lives in
+ * user.communityStats.receivedRatingsAvg and is shown separately).
+ *
+ * Score is 0–100 identity points; stars are score mapped onto a 0.5–5 scale
+ * (nearest half-star, matching the client's half-star renderer). A freshly
+ * registered user always has the "account" item done, so they sign in with a
+ * visible minimum star and climb as they add verifications/documents.
+ */
+
+// Each identity item and the points it contributes. Totals to 100.
+// Keys match the client checklist in TrustCenter.js / PublicProfile.js.
+const TRUST_ITEMS = [
+  { key: 'account',       label: 'Join the community',   points: 10, action: null,            auto: true },
+  { key: 'photo',         label: 'Add a profile photo',  points: 10, action: 'photo' },
+  { key: 'phone',         label: 'Verify your phone',    points: 15, action: 'phone' },
+  { key: 'id',            label: 'Verify your ID',       points: 30, action: 'id' },
+  { key: 'address',       label: 'Proof of address',     points: 10, action: 'address' },
+  { key: 'qualification', label: 'Add a qualification',  points: 10, action: 'qualification' },
+  { key: 'experience',    label: 'Add work experience',  points: 10, action: 'experience' },
+  { key: 'firstJob',      label: 'Complete a job',       points: 5,  action: null,            auto: true },
+];
+
+function hasApprovedOrPendingDoc(user, docType) {
+  return Array.isArray(user.trustDocs) &&
+    user.trustDocs.some(d => d.docType === docType && d.status !== 'rejected');
+}
+
+/** Return whether a given identity item is satisfied for this user. */
+function isItemDone(user, key) {
+  switch (key) {
+    case 'account':       return true; // registered = done
+    case 'photo':         return !!(user.profileImage || user.avatar);
+    case 'phone':         return !!user.phoneVerified;
+    case 'id':            return !!user.verified; // set true when KYC is approved
+    case 'address':       return hasApprovedOrPendingDoc(user, 'address');
+    case 'qualification': return hasApprovedOrPendingDoc(user, 'qualification');
+    case 'experience':    return (Array.isArray(user.workExperience) && user.workExperience.length > 0) ||
+                                 hasApprovedOrPendingDoc(user, 'experience');
+    case 'firstJob':      return (user.communityStats?.jobsCompleted || 0) >= 1;
+    default:              return false;
+  }
+}
+
+function levelForScore(score) {
+  if (score >= 100) return 'Fully Verified';
+  if (score >= 80)  return 'Highly Trusted';
+  if (score >= 60)  return 'Trusted';
+  if (score >= 40)  return 'Verified';
+  if (score >= 20)  return 'Getting Started';
+  return 'New Neighbour';
+}
+
+/**
+ * Compute the identity trust profile for a user document (or lean object).
+ * @returns {{ score:number, stars:number, level:string, checklist:Array }}
+ */
+function computeTrust(user) {
+  if (!user) return { score: 0, stars: 0, level: 'New Neighbour', checklist: [] };
+
+  let score = 0;
+  const checklist = TRUST_ITEMS.map(item => {
+    const done = isItemDone(user, item.key);
+    if (done) score += item.points;
+    return { key: item.key, label: item.label, points: item.points, action: item.action, done };
+  });
+
+  score = Math.max(0, Math.min(100, score));
+  // Map 0–100 → 0–5 stars, rounded to the nearest half star.
+  const stars = Math.round((score / 100) * 5 * 2) / 2;
+
+  return { score, stars, level: levelForScore(score), checklist };
+}
+
+/**
+ * Persist the computed identity stars/score onto the user so lists and cards
+ * can show them without recomputing. Call after any identity-changing event
+ * (doc upload, phone/ID verification, profile photo, first job completion).
+ */
+async function refreshTrust(User, userId) {
+  const user = await User.findById(userId).lean();
+  if (!user) return null;
+  const trust = computeTrust(user);
+  await User.findByIdAndUpdate(userId, {
+    trustStars: trust.stars,
+    trustScore: trust.score,
+    trustLevel: trust.level,
+  });
+  return trust;
+}
+
+module.exports = { computeTrust, refreshTrust, TRUST_ITEMS, levelForScore };

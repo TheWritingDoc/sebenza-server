@@ -3,6 +3,9 @@ const router = express.Router();
 const User = require('../models/User');
 const Service = require('../models/Service');
 const jwt = require('jsonwebtoken');
+const upload = require('../middleware/upload');
+const { uploadFile } = require('../middleware/upload');
+const { computeTrust, refreshTrust } = require('../utils/trustScore');
 
 const optionalAuth = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
@@ -118,6 +121,108 @@ router.get('/referrer/:code', async (req, res) => {
     if (!user) return res.status(404).json({ error: 'Referrer not found' });
     res.json({ name: user.name, avatar: user.avatar });
   } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ===== IDENTITY TRUST STARS =====
+// These stars reflect ONLY how well a user has proven their identity — they
+// encourage uploading ID so both sides feel safe. Job quality lives separately
+// in communityStats. See utils/trustScore.js.
+
+// My own trust profile + checklist (drives the Trust Centre screen)
+router.get('/me/trust', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.userId)
+      .select('trustDocs workExperience profileImage avatar verified phoneVerified communityStats accountType businessName')
+      .lean();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const trust = computeTrust(user);
+    res.json({
+      ...trust,                       // score, stars, level, checklist
+      accountType: user.accountType || 'individual',
+      businessName: user.businessName || '',
+    });
+  } catch (err) {
+    console.error('Trust (me) error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Public trust view for another user's profile (no sensitive data)
+router.get('/:id/trust', async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id)
+      .select('trustDocs workExperience profileImage avatar verified phoneVerified communityStats accountType businessName name')
+      .lean();
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    const trust = computeTrust(user);
+    res.json({
+      stars: trust.stars,
+      level: trust.level,
+      score: trust.score,
+      verified: !!user.verified,
+      phoneVerified: !!user.phoneVerified,
+      accountType: user.accountType || 'individual',
+      businessName: user.businessName || '',
+    });
+  } catch (err) {
+    console.error('Trust (public) error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Upload a trust document (address / id / drivers_license / qualification).
+// Uploaded docs count toward stars immediately (encourages ID) and are marked
+// 'pending' for optional admin review; a rejected doc stops counting.
+router.post('/trust-docs', auth, upload.single('trustDoc'), async (req, res) => {
+  try {
+    const { docType, title } = req.body;
+    const allowed = ['address', 'id', 'drivers_license', 'qualification', 'experience'];
+    if (!allowed.includes(docType)) {
+      return res.status(400).json({ error: 'Invalid document type' });
+    }
+    if (!req.file) return res.status(400).json({ error: 'A document photo is required' });
+
+    const fileUrl = await uploadFile(req.file, `trust/${docType}`);
+    await User.findByIdAndUpdate(req.user.userId, {
+      $push: {
+        trustDocs: {
+          docType,
+          title: (title || '').toString().slice(0, 120),
+          fileUrl,
+          status: 'pending',
+          uploadedAt: new Date(),
+        },
+      },
+    });
+    const trust = await refreshTrust(User, req.user.userId);
+    res.json({ message: 'Document uploaded', stars: trust?.stars, level: trust?.level, score: trust?.score });
+  } catch (err) {
+    console.error('Trust doc upload error:', err);
+    res.status(500).json({ error: 'Server error uploading document' });
+  }
+});
+
+// Add a work-experience entry (no document required — self-declared)
+router.post('/work-experience', auth, async (req, res) => {
+  try {
+    const { title, place, years } = req.body;
+    if (!title || !title.trim()) return res.status(400).json({ error: 'Please describe the work you did' });
+    await User.findByIdAndUpdate(req.user.userId, {
+      $push: {
+        workExperience: {
+          title: title.toString().slice(0, 160),
+          place: (place || '').toString().slice(0, 120),
+          years: (years || '').toString().slice(0, 40),
+          addedAt: new Date(),
+        },
+      },
+    });
+    const trust = await refreshTrust(User, req.user.userId);
+    res.json({ message: 'Experience added', stars: trust?.stars, level: trust?.level, score: trust?.score });
+  } catch (err) {
+    console.error('Work experience error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

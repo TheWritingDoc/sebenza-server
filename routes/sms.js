@@ -51,8 +51,10 @@ const auth = (req, res, next) => {
 // Generate 6-digit code
 const generateCode = () => Math.floor(100000 + Math.random() * 900000).toString();
 
-// Send SMS verification code
-router.post('/send', auth, smsSendLimiter, async (req, res) => {
+// Send SMS verification code.
+// The web client (SMSVerify.js) posts to /send-code and /verify-code, while the
+// original API used /send and /verify — register both paths so either works.
+router.post(['/send', '/send-code'], auth, smsSendLimiter, async (req, res) => {
   try {
     const { phone } = req.body;
     if (!phone) return res.status(400).json({ error: 'Phone number required' });
@@ -97,8 +99,8 @@ router.post('/send', auth, smsSendLimiter, async (req, res) => {
   }
 });
 
-// Verify SMS code
-router.post('/verify', auth, smsVerifyLimiter, async (req, res) => {
+// Verify SMS code (also accepts /verify-code from the web client)
+router.post(['/verify', '/verify-code'], auth, smsVerifyLimiter, async (req, res) => {
   try {
     const { phone, code } = req.body;
     if (!phone || !code) return res.status(400).json({ error: 'Phone and code required' });
@@ -126,9 +128,13 @@ router.post('/verify', auth, smsVerifyLimiter, async (req, res) => {
     // Delete the code once verified to prevent reuse
     await SMSVerification.deleteMany({ userId: req.userId, phone });
 
-    // Update user phone verified status
+    // Update user phone verified status and refresh identity trust stars
     const User = require('../models/User');
-    await User.findByIdAndUpdate(req.userId, { phoneVerified: true });
+    await User.findByIdAndUpdate(req.userId, { phoneVerified: true, phone });
+    try {
+      const { refreshTrust } = require('../utils/trustScore');
+      await refreshTrust(User, req.userId);
+    } catch (e) { console.error('Trust refresh (phone) failed:', e.message); }
 
     res.json({ message: 'Phone verified successfully' });
   } catch (err) {
