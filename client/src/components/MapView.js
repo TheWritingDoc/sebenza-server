@@ -1,42 +1,142 @@
-import React from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 
-function MapView({ user, onViewPortfolio }) {
+const API_URL = process.env.REACT_APP_API_URL || '';
+
+// Load Leaflet from CDN once (avoids adding an npm dependency / version pins).
+let leafletPromise = null;
+function loadLeaflet() {
+  if (window.L) return Promise.resolve(window.L);
+  if (leafletPromise) return leafletPromise;
+  leafletPromise = new Promise((resolve, reject) => {
+    const css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    document.head.appendChild(css);
+    const js = document.createElement('script');
+    js.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+    js.onload = () => resolve(window.L);
+    js.onerror = reject;
+    document.head.appendChild(js);
+  });
+  return leafletPromise;
+}
+
+const SA_DEFAULT = { lat: -30.5595, lng: 22.9375, zoom: 5 }; // whole country
+
+function MapView({ user }) {
   const navigate = useNavigate();
+  const mapEl = useRef(null);
+  const mapRef = useRef(null);
+  const [layer, setLayer] = useState('all'); // all | jobs | businesses
+  const [counts, setCounts] = useState({ jobs: 0, businesses: 0 });
+  const [error, setError] = useState('');
+  const layerGroups = useRef({ jobs: null, businesses: null });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const L = await loadLeaflet();
+        if (cancelled || !mapEl.current || mapRef.current) return;
+
+        const center = (user?.location?.lat && user?.location?.lng)
+          ? [user.location.lat, user.location.lng]
+          : [SA_DEFAULT.lat, SA_DEFAULT.lng];
+        const zoom = (user?.location?.lat) ? 12 : SA_DEFAULT.zoom;
+
+        const map = L.map(mapEl.current).setView(center, zoom);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+          attribution: '© OpenStreetMap', maxZoom: 19,
+        }).addTo(map);
+        mapRef.current = map;
+        // Ensure tiles lay out correctly once the container has its final size.
+        setTimeout(() => { try { map.invalidateSize(); } catch (e) {} }, 200);
+
+        const jobsGroup = L.layerGroup().addTo(map);
+        const bizGroup = L.layerGroup().addTo(map);
+        layerGroups.current = { jobs: jobsGroup, businesses: bizGroup };
+
+        const pin = (emoji, color) => L.divIcon({
+          className: '', html: `<div style="font-size:22px;filter:drop-shadow(0 1px 2px rgba(0,0,0,.35))">${emoji}</div>`,
+          iconSize: [24, 24], iconAnchor: [12, 24],
+        });
+
+        // Jobs (temporary)
+        try {
+          const q = user?.location?.lat ? `?lat=${user.location.lat}&lng=${user.location.lng}` : '';
+          const jobs = (await axios.get(`${API_URL}/api/jobs${q}`)).data || [];
+          let jc = 0;
+          jobs.forEach(j => {
+            if (!j.location?.lat) return;
+            jc++;
+            L.marker([j.location.lat, j.location.lng], { icon: pin('📌') })
+              .bindPopup(`<strong>${j.title}</strong><br/>R${j.budgetMin || j.budget}${j.budgetMax ? '–R' + j.budgetMax : ''}<br/><span style="color:#6366f1">${j.category || ''}</span>`)
+              .addTo(jobsGroup);
+          });
+          if (!cancelled) setCounts(c => ({ ...c, jobs: jc }));
+        } catch (e) { /* jobs optional */ }
+
+        // Businesses (always-on)
+        try {
+          const biz = (await axios.get(`${API_URL}/api/users/businesses`)).data || [];
+          let bc = 0;
+          biz.forEach(b => {
+            if (!b.lat) return;
+            bc++;
+            const stars = '★'.repeat(Math.round(b.trustStars || 0));
+            const m = L.marker([b.lat, b.lng], { icon: pin(b.accountType === 'business' ? '🏢' : '👥') })
+              .bindPopup(`<strong>${b.name}</strong>${b.verified ? ' 🪪' : ''}<br/><span style="color:#f59e0b">${stars}</span> ${b.trustLevel || ''}<br/><span style="color:#6366f1">${b.category || ''}</span><br/><a href="/user/${b.id}">View profile →</a>`);
+            m.on('popupopen', () => {
+              const link = document.querySelector('.leaflet-popup a[href^="/user/"]');
+              if (link) link.onclick = (ev) => { ev.preventDefault(); navigate(`/user/${b.id}`); };
+            });
+            m.addTo(bizGroup);
+          });
+          if (!cancelled) setCounts(c => ({ ...c, businesses: bc }));
+        } catch (e) { /* businesses optional */ }
+      } catch (e) {
+        if (!cancelled) setError('Could not load the map. Check your connection and try again.');
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null; }
+    };
+  }, [user, navigate]);
+
+  // Toggle layers
+  useEffect(() => {
+    const { jobs, businesses } = layerGroups.current;
+    const map = mapRef.current;
+    if (!map || !jobs || !businesses) return;
+    (layer === 'all' || layer === 'jobs') ? jobs.addTo(map) : map.removeLayer(jobs);
+    (layer === 'all' || layer === 'businesses') ? businesses.addTo(map) : map.removeLayer(businesses);
+  }, [layer]);
+
+  const tab = (key, label) => (
+    <button onClick={() => setLayer(key)} style={{
+      flex: 1, minHeight: 40, borderRadius: 10, border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 700,
+      background: layer === key ? '#4f46e5' : '#f1f5f9', color: layer === key ? 'white' : '#475569',
+    }}>{label}</button>
+  );
 
   return (
-    <div style={{ padding: '20px', maxWidth: 900, margin: '0 auto' }}>
-      <h1 style={{ fontSize: 24, fontWeight: 800, marginBottom: 16, color: '#1e293b' }}>
-        Map View
-      </h1>
-      <p style={{ fontSize: 14, color: '#64748b', marginBottom: 24 }}>
-        Find jobs and services near you on the map.
+    <div style={{ maxWidth: 900, margin: '0 auto', padding: '12px 12px 90px' }}>
+      <h1 style={{ fontSize: 20, fontWeight: 800, margin: '0 0 4px', color: '#1e293b' }}>🗺️ Map</h1>
+      <p style={{ fontSize: 13, color: '#64748b', margin: '0 0 10px' }}>
+        📌 {counts.jobs} live jobs · 🏢 {counts.businesses} businesses near you
       </p>
-      
-      <div style={{ 
-        background: 'white', borderRadius: 20, padding: 40, 
-        border: '1px solid #f1f5f9', boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
-        textAlign: 'center'
-      }}>
-        <div style={{ fontSize: 48, marginBottom: 16 }}>🗺️</div>
-        <h3 style={{ fontSize: 18, fontWeight: 700, color: '#1e293b', marginBottom: 8 }}>
-          Map Coming Soon
-        </h3>
-        <p style={{ fontSize: 14, color: '#64748b', marginBottom: 20, maxWidth: 400, margin: '0 auto 20px' }}>
-          We're working on an interactive map to help you find jobs and services nearby. 
-          In the meantime, browse the job board!
-        </p>
-        <button 
-          onClick={() => navigate('/jobs')}
-          style={{
-            padding: '14px 28px', borderRadius: 14, border: 'none',
-            background: 'linear-gradient(135deg, #6366f1, #4f46e5)', color: 'white',
-            fontSize: 14, fontWeight: 700, cursor: 'pointer'
-          }}
-        >
-          Browse Job Board
-        </button>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+        {tab('all', 'All')}
+        {tab('jobs', '📌 Jobs')}
+        {tab('businesses', '🏢 Businesses')}
       </div>
+      {error && <div style={{ background: '#fef2f2', color: '#991b1b', padding: 12, borderRadius: 12, fontSize: 13, marginBottom: 10 }}>{error}</div>}
+      <div ref={mapEl} style={{ height: '65vh', minHeight: 380, borderRadius: 16, overflow: 'hidden', border: '1px solid #e2e8f0' }} />
     </div>
   );
 }

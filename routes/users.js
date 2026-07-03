@@ -302,6 +302,37 @@ router.post('/verify-email-code', auth, async (req, res) => {
   }
 });
 
+// ===== BUSINESSES ON THE MAP (always-on pins) =====
+// Registered businesses/teams with a location are shown on the map full-time
+// (unlike jobs, which are temporary). Public — powers the map's business layer.
+router.get('/businesses', async (req, res) => {
+  try {
+    const businesses = await User.find({
+      accountType: { $in: ['business', 'team'] },
+      'location.lat': { $exists: true, $ne: null, $ne: 0 },
+      'location.lng': { $exists: true, $ne: null, $ne: 0 },
+    })
+      .select('name businessName accountType primaryCategory location trustStars trustLevel verified profileImage')
+      .limit(500)
+      .lean();
+
+    res.json(businesses.map(b => ({
+      id: b._id,
+      name: b.businessName || b.name,
+      accountType: b.accountType,
+      category: b.primaryCategory || '',
+      lat: b.location.lat,
+      lng: b.location.lng,
+      trustStars: b.trustStars || 0,
+      trustLevel: b.trustLevel || '',
+      verified: !!b.verified,
+    })));
+  } catch (err) {
+    console.error('Businesses map error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // ===== RECOMMEND / ENDORSE A USER =====
 // "I vouch for this person." One endorsement per user; toggle on/off.
 router.post('/:id/endorse', auth, async (req, res) => {
