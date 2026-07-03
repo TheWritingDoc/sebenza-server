@@ -25,8 +25,9 @@ async function createEscrowTransaction(job, acceptedApp, finalAmount, transactio
 
   if (job.paymentMethod === 'escrow') {
     if ((poster.randBalance || 0) < finalAmount) {
-      // Auto top-up so the flow never breaks for users
-      poster.randBalance = finalAmount + 1000;
+      const err = new Error(`Insufficient balance: R${finalAmount} needed to fund escrow, poster has R${poster.randBalance || 0}`);
+      err.code = 'INSUFFICIENT_BALANCE';
+      throw err;
     }
     poster.randBalance = (poster.randBalance || 0) - finalAmount;
     poster.escrowRand = (poster.escrowRand || 0) + finalAmount;
@@ -136,4 +137,31 @@ async function partialReleaseEscrow(transaction, percentage = 50, releasedBy = n
   return transaction;
 }
 
-module.exports = { createEscrowTransaction, releaseEscrow, partialReleaseEscrow };
+/**
+ * Refund held escrow funds back to the poster (job cancelled/stopped).
+ * Idempotent: does nothing if funds were already released or refunded.
+ * Any partial amount already released to the provider stays with them;
+ * only the remaining held portion returns to the poster.
+ * @param {Object} transaction - Transaction document
+ * @returns {Promise<void>}
+ */
+async function refundEscrow(transaction) {
+  if (!transaction || transaction.paymentMethod !== 'escrow') return;
+  if (transaction.escrowStatus !== 'held') return; // already released/refunded/none
+
+  const alreadyReleased = Math.min(Math.max(transaction.partialReleaseAmount || 0, 0), transaction.randAmount || 0);
+  const remainingAmount = Math.max(0, (transaction.randAmount || 0) - alreadyReleased);
+
+  transaction.status = 'cancelled';
+  transaction.escrowStatus = 'refunded';
+  await transaction.save();
+
+  const posterUser = await User.findById(transaction.requesterId);
+  if (posterUser) {
+    posterUser.escrowRand = Math.max(0, (posterUser.escrowRand || 0) - remainingAmount);
+    posterUser.randBalance = (posterUser.randBalance || 0) + remainingAmount;
+    await posterUser.save();
+  }
+}
+
+module.exports = { createEscrowTransaction, releaseEscrow, partialReleaseEscrow, refundEscrow };

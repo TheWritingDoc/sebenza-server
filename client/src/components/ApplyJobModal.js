@@ -49,12 +49,9 @@ function ApplyJobModal({ job, onClose, onApplied }) {
     setLoading(true);
     setError('');
     try {
-      const csrfRes = await axios.get(`${API_URL}/api/csrf-token`, { withCredentials: true });
-      const csrfToken = csrfRes.data.csrfToken;
-
       await axios.post(`${API_URL}/api/jobs/${job._id}/apply`,
         { proposedAmount: amount, timeAdjustment: timeAdjustment ? new Date(timeAdjustment).toISOString() : undefined, message },
-        { headers: { Authorization: `Bearer ${token}`, 'X-CSRF-Token': csrfToken }, withCredentials: true }
+        { headers: { Authorization: `Bearer ${token}` }, withCredentials: true }
       );
       onApplied();
     } catch (err) {

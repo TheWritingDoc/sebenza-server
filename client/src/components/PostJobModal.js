@@ -121,7 +121,10 @@ function PostJobModal({ user, onClose, onPosted }) {
   const [estimatedDuration, setEstimatedDuration] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('cash');
   const [proposedTime, setProposedTime] = useState(''); // datetime-local for scheduled
-  const [proposedTimeOfDay, setProposedTimeOfDay] = useState(''); // time-only for immediate
+  // Default to '12:00' so the value matches what the clock picker displays.
+  // With '' the picker still SHOWS 12:00 but submit fails "required" — a trap
+  // where the user sees a set time yet can't post.
+  const [proposedTimeOfDay, setProposedTimeOfDay] = useState('12:00'); // time-only for immediate
   const [timeIsNegotiable, setTimeIsNegotiable] = useState(true);
   const [applicationDeadline, setApplicationDeadline] = useState('');
   const [postingMode, setPostingMode] = useState('immediate'); // 'immediate' | 'scheduled'
@@ -305,10 +308,9 @@ function PostJobModal({ user, onClose, onPosted }) {
 
       const response = await axios.post(`${API_URL}/api/jobs`, formData,
         {
-          headers: { 
-            Authorization: `Bearer ${token}`, 
-            'Content-Type': 'multipart/form-data',
-            'X-CSRF-Token': (await axios.get(`${API_URL}/api/csrf-token`, { withCredentials: true })).data.csrfToken
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'multipart/form-data'
           },
           withCredentials: true,
           onUploadProgress: (ev) => {

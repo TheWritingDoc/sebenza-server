@@ -11,6 +11,7 @@ const upload = require('../middleware/upload');
 const { uploadFiles } = require('../middleware/upload');
 const jwt = require('jsonwebtoken');
 const { sendNotification } = require('../utils/notifications');
+const { createEscrowTransaction, releaseEscrow, partialReleaseEscrow, refundEscrow } = require('../utils/escrow');
 
 // ─── Auth middleware ───
 const auth = (req, res, next) => {
@@ -340,7 +341,7 @@ router.get('/:id', async (req, res) => {
 // ─── POST /api/jobs — Create job ───
 router.post('/', auth, createJobLimiter, upload.array('images', 10), async (req, res) => {
   try {
-    const { title, description, category, budget, budgetMin, budgetMax, isUrgent, lat, lng, scheduledDate, proposedTime, timeIsNegotiable, applicationDeadline, estimatedDuration, tags } = req.body;
+    const { title, description, category, budget, budgetMin, budgetMax, isUrgent, lat, lng, scheduledDate, proposedTime, timeIsNegotiable, applicationDeadline, estimatedDuration, tags, paymentMethod } = req.body;
 
     // ── Validation ──
     let latVal = lat !== undefined ? lat : req.body.location?.lat;
@@ -395,6 +396,7 @@ router.post('/', auth, createJobLimiter, upload.array('images', 10), async (req,
       budgetMin: budgetMin ? parseFloat(budgetMin) : undefined,
       budgetMax: budgetMax ? parseFloat(budgetMax) : undefined,
       isUrgent: isUrgent === 'true' || isUrgent === true,
+      paymentMethod: ['escrow', 'cash'].includes(paymentMethod) ? paymentMethod : 'cash',
       location: { lat: latNum, lng: lngNum },
       images,
       scheduledDate: scheduledDate ? new Date(scheduledDate) : undefined,
@@ -686,8 +688,41 @@ router.post('/:id/applications/:appId/reject-offer', auth, async (req, res) => {
 });
 
 // ─── POST /api/jobs/:id/applications/:appId/confirm — Helper confirms approved offer ───
+// Mutual acceptance point: this is where the escrow is funded. For escrow jobs
+// the poster's balance moves into escrowRand and a Transaction is created; for
+// cash jobs a Transaction record is still created (escrowStatus 'none') so the
+// job has a payment record either way.
 router.post('/:id/applications/:appId/confirm', auth, async (req, res) => {
   try {
+    // Pre-check: for escrow jobs the poster must be able to fund the agreed
+    // amount. Checked before the status flip so a failed confirm leaves the
+    // job in 'approved' and the parties can top up / renegotiate.
+    const preJob = await Job.findOne({
+      _id: req.params.id,
+      'applications._id': req.params.appId,
+      'applications.applicantId': new mongoose.Types.ObjectId(req.userId),
+      status: 'approved'
+    });
+    if (!preJob) return res.status(400).json({ error: 'Cannot confirm: offer not approved or already handled' });
+
+    const preApp = preJob.applications.id(req.params.appId);
+    const finalAmount = preApp?.approvedAmount ?? preApp?.proposedAmount ?? preJob.budget;
+
+    if (preJob.paymentMethod === 'escrow') {
+      const poster = await User.findById(preJob.posterId).select('randBalance');
+      if (!poster || (poster.randBalance || 0) < finalAmount) {
+        notify(req, preJob.posterId, {
+          type: 'escrow_funding_failed',
+          title: 'Escrow Funding Needed ⚠️',
+          message: `Your balance is too low to fund R${finalAmount} escrow for "${preJob.title}". Top up so your helper can confirm.`,
+          jobId: preJob._id
+        });
+        return res.status(400).json({
+          error: `The poster's balance can't cover the R${finalAmount} escrow yet. They've been notified to top up.`
+        });
+      }
+    }
+
     const job = await Job.findOneAndUpdate(
       {
         _id: req.params.id,
@@ -700,12 +735,36 @@ router.post('/:id/applications/:appId/confirm', auth, async (req, res) => {
       { new: true }
     );
     if (!job) return res.status(400).json({ error: 'Cannot confirm: offer not approved or already handled' });
-    res.json({ message: 'Offer confirmed' });
+
+    // Fund escrow / create the payment record. createEscrowTransaction is
+    // idempotent per job, so a concurrent double-confirm can't double-fund.
+    try {
+      const acceptedApp = job.applications.id(req.params.appId);
+      const transaction = await createEscrowTransaction(job, acceptedApp, finalAmount);
+      job.transactionId = transaction._id;
+      await job.save();
+    } catch (escrowErr) {
+      // Rare race: balance dropped between pre-check and funding. Roll the job
+      // back to 'approved' so the flow can be retried, and tell both sides.
+      await Job.updateOne(
+        { _id: job._id, status: 'accepted' },
+        { $set: { status: 'approved', 'applications.$[app].status': 'approved' } },
+        { arrayFilters: [{ 'app._id': job.acceptedApplicationId }] }
+      );
+      if (escrowErr.code === 'INSUFFICIENT_BALANCE') {
+        return res.status(400).json({ error: 'The poster\'s balance can\'t cover the escrow. They\'ve been notified.' });
+      }
+      throw escrowErr;
+    }
+
+    res.json({ message: 'Offer confirmed', escrowFunded: job.paymentMethod === 'escrow', amount: finalAmount });
 
     notify(req, job.posterId, {
       type: 'schedule_confirmed',
       title: 'Job Confirmed 📅',
-      message: `Your helper confirmed "${job.title}" — it's locked in!`,
+      message: job.paymentMethod === 'escrow'
+        ? `Your helper confirmed "${job.title}" — R${finalAmount} is now held in escrow.`
+        : `Your helper confirmed "${job.title}" — it's locked in! (Cash: R${finalAmount})`,
       jobId: job._id
     });
   } catch (err) {
@@ -993,7 +1052,23 @@ router.post('/:id/stop-job', auth, upload.array('stopPhotos', 10), async (req, r
     job.stoppedBy = req.userId;
     await job.save();
 
-    res.json({ message: 'Job stopped' });
+    // Return any held escrow to the poster. refundEscrow is idempotent and
+    // leaves any already-partially-released amount with the provider.
+    let refunded = 0;
+    try {
+      const transaction = job.transactionId
+        ? await Transaction.findById(job.transactionId)
+        : await Transaction.findOne({ jobId: job._id, escrowStatus: 'held' });
+      if (transaction && transaction.escrowStatus === 'held') {
+        const alreadyReleased = transaction.partialReleaseAmount || 0;
+        refunded = Math.max(0, (transaction.randAmount || 0) - alreadyReleased);
+        await refundEscrow(transaction);
+      }
+    } catch (refundErr) {
+      console.error('Stop-job escrow refund error:', refundErr);
+    }
+
+    res.json({ message: refunded > 0 ? `Job stopped. R${refunded} escrow refunded to your balance.` : 'Job stopped', refundedAmount: refunded });
   } catch (err) {
     console.error('Stop job error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -1178,32 +1253,90 @@ router.post('/:id/payment-handshake', auth, async (req, res) => {
       return res.json({ message: 'Payment already confirmed by you', awaitingOther: alreadyConfirmed.length < 2 });
     }
 
-    alreadyConfirmed.push(String(req.userId));
-    job.paymentConfirmedBy = alreadyConfirmed;
-
-    // Log handshake
-    job.handshakeLog = job.handshakeLog || [];
+    // Atomic $addToSet so two concurrent confirmations can't both think they
+    // were first (each request records its own confirmation exactly once).
     const latNum = lat !== undefined ? parseFloat(lat) : undefined;
     const lngNum = lng !== undefined ? parseFloat(lng) : undefined;
-    job.handshakeLog.push({
-      event: 'payment_confirmed',
-      posterLocation: isPoster ? { lat: latNum, lng: lngNum } : undefined,
-      providerLocation: isProvider ? { lat: latNum, lng: lngNum } : undefined,
-      triggeredAt: new Date()
-    });
+    const updated = await Job.findOneAndUpdate(
+      { _id: job._id, status: 'pending_payment' },
+      {
+        $addToSet: { paymentConfirmedBy: req.userId },
+        $push: {
+          handshakeLog: {
+            event: 'payment_confirmed',
+            posterLocation: isPoster ? { lat: latNum, lng: lngNum } : undefined,
+            providerLocation: isProvider ? { lat: latNum, lng: lngNum } : undefined,
+            triggeredAt: new Date()
+          }
+        }
+      },
+      { new: true }
+    );
+    if (!updated) return res.status(400).json({ error: 'Job is no longer awaiting payment' });
 
-    if (alreadyConfirmed.length >= 2) {
-      job.paymentConfirmed = true;
-      job.paymentConfirmedAt = new Date();
-      job.status = 'completed';
-      job.completedAt = new Date();
+    let bothConfirmed = false;
+    if ((updated.paymentConfirmedBy || []).length >= 2) {
+      // Guarded finalize: exactly one request wins this update and performs
+      // the money movement, even if both parties confirm simultaneously.
+      const finalized = await Job.findOneAndUpdate(
+        { _id: job._id, status: 'pending_payment' },
+        {
+          $set: {
+            paymentConfirmed: true,
+            paymentConfirmedAt: new Date(),
+            status: 'completed',
+            completedAt: new Date()
+          }
+        },
+        { new: true }
+      );
+      bothConfirmed = true;
+
+      if (finalized) {
+        // Move the money. releaseEscrow is idempotent (no-op if already
+        // released) and only acts on escrow transactions.
+        try {
+          const transaction = finalized.transactionId
+            ? await Transaction.findById(finalized.transactionId)
+            : await Transaction.findOne({ jobId: finalized._id, status: { $in: ['in_progress', 'accepted', 'pending'] } });
+          if (transaction) {
+            if (transaction.paymentMethod === 'escrow') {
+              await releaseEscrow(transaction);
+            } else {
+              // Cash: money changed hands in person — just close the record.
+              transaction.status = 'completed';
+              await transaction.save();
+            }
+          } else {
+            console.error(`Payment handshake: no transaction found for job ${finalized._id} — funds not moved`);
+          }
+        } catch (payErr) {
+          console.error('Escrow release error:', payErr);
+        }
+
+        const providerId = app?.applicantId?.toString?.() || String(app?.applicantId);
+        notify(req, finalized.posterId, {
+          type: 'job_completed',
+          title: 'Job Completed ✅',
+          message: `"${finalized.title}" is done — payment confirmed by both parties.`,
+          jobId: finalized._id
+        });
+        if (providerId) {
+          notify(req, providerId, {
+            type: 'job_completed',
+            title: finalized.paymentMethod === 'escrow' ? 'Payment Released 💰' : 'Job Completed ✅',
+            message: finalized.paymentMethod === 'escrow'
+              ? `Escrow for "${finalized.title}" has been released to your balance.`
+              : `"${finalized.title}" is complete. Don't forget to leave a review!`,
+            jobId: finalized._id
+          });
+        }
+      }
     }
 
-    await job.save();
-
     res.json({
-      message: alreadyConfirmed.length >= 2 ? 'Payment confirmed by both parties. Job completed.' : 'Payment confirmation recorded. Awaiting other party.',
-      paymentConfirmed: job.paymentConfirmed
+      message: bothConfirmed ? 'Payment confirmed by both parties. Job completed.' : 'Payment confirmation recorded. Awaiting other party.',
+      paymentConfirmed: bothConfirmed
     });
   } catch (err) {
     console.error('Payment handshake error:', err);
@@ -1212,22 +1345,56 @@ router.post('/:id/payment-handshake', auth, async (req, res) => {
 });
 
 // ─── POST /api/jobs/:id/partial-release ───
+// Poster releases up to 50% of held escrow to the provider mid-job (e.g. for
+// materials). Actually moves funds via partialReleaseEscrow — once only.
 router.post('/:id/partial-release', auth, async (req, res) => {
   try {
     const { amount } = req.body;
     const job = await Job.findOne({ _id: req.params.id, posterId: req.userId });
     if (!job) return res.status(404).json({ error: 'Job not found' });
     if (job.partialEscrowReleased) return res.status(400).json({ error: 'Partial release already done' });
+    if (job.paymentMethod !== 'escrow') return res.status(400).json({ error: 'Partial release only applies to escrow jobs' });
+    if (!['in_progress', 'pending_review', 'pending_payment'].includes(job.status)) {
+      return res.status(400).json({ error: `Cannot release funds while job is ${job.status}` });
+    }
 
     const releaseAmount = parseFloat(amount);
     if (isNaN(releaseAmount) || releaseAmount <= 0) return res.status(400).json({ error: 'Invalid amount' });
 
+    const transaction = job.transactionId
+      ? await Transaction.findById(job.transactionId)
+      : await Transaction.findOne({ jobId: job._id, escrowStatus: 'held' });
+    if (!transaction) return res.status(400).json({ error: 'No escrow transaction found for this job' });
+
+    // partialReleaseEscrow enforces the 50% cap and once-only rule and moves
+    // the funds from the poster's escrow to the provider's balance.
+    const percentage = (releaseAmount / transaction.randAmount) * 100;
+    try {
+      await partialReleaseEscrow(transaction, percentage, req.userId);
+    } catch (escrowErr) {
+      return res.status(400).json({ error: escrowErr.message });
+    }
+
     job.partialEscrowReleased = true;
-    job.partialEscrowAmount = releaseAmount;
+    job.partialEscrowAmount = transaction.partialReleaseAmount;
     job.partialEscrowReleasedAt = new Date();
     await job.save();
 
-    res.json({ message: 'Partial release recorded' });
+    res.json({ message: `R${transaction.partialReleaseAmount} released to your helper`, releasedAmount: transaction.partialReleaseAmount });
+
+    try {
+      const acceptedApp = job.applications.id(job.acceptedApplicationId);
+      if (acceptedApp) {
+        notify(req, acceptedApp.applicantId, {
+          type: 'partial_release',
+          title: 'Advance Payment 💰',
+          message: `R${transaction.partialReleaseAmount} was released to your balance for "${job.title}".`,
+          jobId: job._id
+        });
+      }
+    } catch (notifyErr) {
+      console.error('Partial release notify error:', notifyErr.message);
+    }
   } catch (err) {
     console.error('Partial release error:', err);
     res.status(500).json({ error: 'Server error' });

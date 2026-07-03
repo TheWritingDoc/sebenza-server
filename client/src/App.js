@@ -274,6 +274,7 @@ function App() {
               <Route path="/create-service" element={user ? <CreateService user={user} onServiceCreated={handleServiceCreated} /> : <Navigate to="/login" />} />
               <Route path="/user/:id" element={<PublicProfile />} />
               <Route path="/invite" element={<InvitePage />} />
+              <Route path="*" element={<Navigate to={user ? '/dashboard' : '/'} replace />} />
             </Routes>
           </Suspense>
         </div>
