@@ -341,7 +341,7 @@ router.get('/:id', async (req, res) => {
 // ─── POST /api/jobs — Create job ───
 router.post('/', auth, createJobLimiter, upload.array('images', 10), async (req, res) => {
   try {
-    const { title, description, category, budget, budgetMin, budgetMax, isUrgent, lat, lng, scheduledDate, proposedTime, timeIsNegotiable, applicationDeadline, estimatedDuration, tags, paymentMethod } = req.body;
+    const { title, description, category, budget, budgetMin, budgetMax, isUrgent, lat, lng, scheduledDate, proposedTime, timeIsNegotiable, applicationDeadline, estimatedDuration, tags, paymentMethod, publishAt } = req.body;
 
     // ── Validation ──
     let latVal = lat !== undefined ? lat : req.body.location?.lat;
@@ -387,6 +387,16 @@ router.post('/', auth, createJobLimiter, upload.array('images', 10), async (req,
       uploadedAt: new Date()
     }));
 
+    // Job lifetime: every job is live for 24 hours. An immediate job's clock
+    // starts now; a scheduled job stays hidden until publishAt and its 24h
+    // window starts THEN — so "post for Saturday" means it appears Saturday and
+    // expires 24h later. applicationDeadline defaults to expiry if not given.
+    const now = new Date();
+    const publishAtDate = publishAt ? new Date(publishAt) : now;
+    const validPublish = !isNaN(publishAtDate.getTime()) ? publishAtDate : now;
+    const expiresAtDate = new Date(validPublish.getTime() + 24 * 60 * 60 * 1000);
+    const deadlineDate = applicationDeadline ? new Date(applicationDeadline) : expiresAtDate;
+
     const job = new Job({
       posterId: req.userId,
       title: cleanTitle,
@@ -402,7 +412,9 @@ router.post('/', auth, createJobLimiter, upload.array('images', 10), async (req,
       scheduledDate: scheduledDate ? new Date(scheduledDate) : undefined,
       proposedTime: proposedTime ? new Date(proposedTime) : undefined,
       timeIsNegotiable: timeIsNegotiable !== 'false',
-      applicationDeadline: applicationDeadline ? new Date(applicationDeadline) : undefined,
+      publishAt: validPublish,
+      expiresAt: expiresAtDate,
+      applicationDeadline: deadlineDate,
       estimatedDuration: estimatedDuration ? sanitizeString(estimatedDuration, 50) : undefined,
       tags: cleanTags
     });
@@ -451,6 +463,14 @@ router.post('/:id/apply', auth, async (req, res) => {
     if (!job) return res.status(404).json({ error: 'Job not found' });
     if (job.status !== 'open') return res.status(400).json({ error: 'Job is no longer open for applications' });
     if (String(job.posterId) === req.userId) return res.status(403).json({ error: 'Cannot apply to your own job' });
+    // Enforce the 24h window / application deadline
+    const nowTs = Date.now();
+    if (job.expiresAt && new Date(job.expiresAt).getTime() < nowTs) {
+      return res.status(400).json({ error: 'This job has expired' });
+    }
+    if (job.applicationDeadline && new Date(job.applicationDeadline).getTime() < nowTs) {
+      return res.status(400).json({ error: 'Applications for this job have closed' });
+    }
 
     const amount = parseFloat(proposedAmount);
     if (isNaN(amount) || amount <= 0) return res.status(400).json({ error: 'Invalid proposed amount' });

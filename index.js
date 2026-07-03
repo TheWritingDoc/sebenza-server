@@ -1129,6 +1129,41 @@ io.on('connection', (socket) => {
 
 
 
+// ── Expire stale jobs ──
+// Every job is live for 24h from its publish time. Jobs that reach expiry
+// while still un-started (open/negotiating/approved) are flipped to 'expired'
+// and the poster is nudged to repost. Started jobs (accepted/in_progress/…) are
+// never auto-expired. The browse query already hides past-expiry jobs, so this
+// is about status hygiene + notifying the poster, not visibility.
+async function sweepExpiredJobs() {
+  if (!mongoConnected || !Job) return;
+  try {
+    const now = new Date();
+    const stale = await Job.find({
+      status: { $in: ['open', 'negotiating', 'approved'] },
+      expiresAt: { $lt: now }
+    }).select('_id posterId title');
+    if (stale.length === 0) return;
+    const ids = stale.map(j => j._id);
+    await Job.updateMany({ _id: { $in: ids } }, { $set: { status: 'expired' } });
+    const notifier = require('./utils/notifications');
+    for (const j of stale) {
+      notifier.sendNotification(io, onlineUsers, j.posterId, {
+        type: 'job_expired',
+        title: 'Job Expired',
+        message: `"${j.title}" reached its 24-hour limit with no accepted helper. Repost it to try again.`,
+        jobId: j._id
+      }).catch(() => {});
+    }
+    console.log(`Expired ${stale.length} stale job(s)`);
+  } catch (err) {
+    console.error('Job sweep error:', err.message);
+  }
+}
+// Run shortly after boot, then every 15 minutes.
+setTimeout(sweepExpiredJobs, 30 * 1000);
+setInterval(sweepExpiredJobs, 15 * 60 * 1000);
+
 httpServer.listen(PORT, () => {
 
   console.log('========================================');
