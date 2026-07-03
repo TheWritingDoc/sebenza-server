@@ -162,40 +162,39 @@ const MONGO_OPTIONS = {
   family: 4
 };
 
-const connectWithRetry = async (retries = 5, delay = 5000) => {
-  for (let i = 0; i < retries; i++) {
+// Startup order matters: whitelist this instance's IP in Atlas BEFORE trying
+// to connect. A fresh Render instance often has an IP that isn't in the Atlas
+// access list yet — gating the whitelist behind a successful connection was a
+// chicken-and-egg lockout that left the server stuck in DEMO mode after
+// deploys. Then retry the connection forever with capped backoff: the app
+// serves the static client meanwhile and heals itself once Atlas is reachable
+// (access-list changes take ~30-60s to propagate).
+async function ensureAtlasAccessAndConnect() {
+  if (process.env.MONGODB_ATLAS_PUBLIC_KEY && process.env.MONGODB_ATLAS_PRIVATE_KEY) {
+    try {
+      const result = await whitelistSelf({ comment: 'Auto-whitelisted on Sebenza server startup' });
+      console.log(`Atlas IP whitelist: ${result.alreadyWhitelisted ? 'already allowed' : 'added'} ${result.ip}`);
+    } catch (err) {
+      console.warn('Atlas auto-whitelist failed (non-fatal):', err.message);
+    }
+  }
+
+  let delay = 5000;
+  for (let attempt = 1; ; attempt++) {
     try {
       await mongoose.connect(MONGODB_URI, MONGO_OPTIONS);
       console.log('Connected to MongoDB');
       mongoConnected = true;
-      return true;
+      return;
     } catch (err) {
-      console.error(`MongoDB connection attempt ${i + 1} failed:`, err.message);
-      if (i < retries - 1) {
-        console.log(`Retrying in ${delay / 1000} seconds...`);
-        await new Promise(resolve => setTimeout(resolve, delay));
-      }
+      console.error(`MongoDB connection attempt ${attempt} failed:`, err.message);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      delay = Math.min(Math.round(delay * 1.5), 60000);
     }
   }
-  throw new Error('Failed to connect to MongoDB after multiple attempts');
-};
+}
 
-connectWithRetry()
-  .then(async () => {
-    mongoConnected = true;
-    // Auto-whitelist the server's public IP in Atlas so API automation works
-    if (process.env.MONGODB_ATLAS_PUBLIC_KEY && process.env.MONGODB_ATLAS_PRIVATE_KEY) {
-      try {
-        const result = await whitelistSelf({ comment: 'Auto-whitelisted on Sebenza server startup' });
-        console.log(`Atlas IP whitelist: ${result.alreadyWhitelisted ? 'already allowed' : 'added'} ${result.ip}`);
-      } catch (err) {
-        console.warn('Atlas auto-whitelist failed (non-fatal):', err.message);
-      }
-    }
-  })
-  .catch(err => {
-    console.error('MongoDB connection failed:', err.message);
-  });
+ensureAtlasAccessAndConnect();
 
 
 
