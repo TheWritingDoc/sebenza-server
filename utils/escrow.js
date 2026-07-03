@@ -59,9 +59,17 @@ async function createEscrowTransaction(job, acceptedApp, finalAmount, transactio
 async function releaseEscrow(transaction) {
   if (!transaction || transaction.paymentMethod !== 'escrow') return;
 
-  // If partial release was done, only release the remaining amount
-  const alreadyReleased = transaction.partialReleaseAmount || 0;
-  const remainingAmount = transaction.randAmount - alreadyReleased;
+  // Idempotency: if funds were already fully released, do nothing. Prevents
+  // a second handshake/confirmation from double-crediting the provider.
+  if (transaction.escrowStatus === 'released' || transaction.status === 'completed') {
+    return;
+  }
+
+  // If partial release was done, only release the remaining amount. Clamp to
+  // [0, randAmount] so a corrupted partialReleaseAmount can never produce a
+  // negative (double-pay) or over-sized release.
+  const alreadyReleased = Math.min(Math.max(transaction.partialReleaseAmount || 0, 0), transaction.randAmount || 0);
+  const remainingAmount = Math.max(0, (transaction.randAmount || 0) - alreadyReleased);
 
   transaction.status = 'completed';
   transaction.escrowStatus = 'released';

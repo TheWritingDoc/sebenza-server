@@ -362,7 +362,7 @@ router.post('/pay-profile-view', auth, async (req, res) => {
       });
     }
     
-    // Process payment — fee goes to GShop platform, not the provider
+    // Process payment — fee goes to Sebenza platform, not the provider
     viewer.randBalance = (viewer.randBalance || 0) - fee;
     
     viewer.paidProfileViews = viewer.paidProfileViews || [];

@@ -19,7 +19,7 @@ const rawUsers = [
 
 async function seedUsers() {
   try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/gshop');
+    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/sebenza');
     console.log('Connected to MongoDB');
 
     // Clear existing users

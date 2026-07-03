@@ -4,5 +4,13 @@ downloads/
 *.backup*
 *.log
 node_modules/
+client/node_modules/
 client_build/
 tests/e2e/screenshots/
+
+# Sourcemaps are rebuilt on every build; don't commit them.
+client/build/static/js/*.map
+client/build/static/css/*.map
+
+# Claude Code local permission/cache files.
+.claude/settings.local.json

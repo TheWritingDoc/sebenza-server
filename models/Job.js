@@ -131,6 +131,7 @@ const jobSchema = new mongoose.Schema({
     note: { type: String, default: '', maxlength: 1200, trim: true },
     photos: [{
       url: String,
+      location: { lat: Number, lng: Number },
       uploadedAt: { type: Date, default: Date.now }
     }],
     createdAt: { type: Date, default: Date.now }

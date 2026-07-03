@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const mongoose = require('mongoose');
 const Job = require('../models/Job');
 const User = require('../models/User');
@@ -105,6 +106,28 @@ const QR_PROXIMITY_KM = 0.5; // 500m
 function sanitizeString(str, maxLen) {
   if (typeof str !== 'string') return '';
   return str.trim().slice(0, maxLen);
+}
+
+// ─── Rate limit job creation per user (prevents job-spam / DB bloat) ───
+// Keyed by the authenticated user, falling back to a normalised client IP.
+const createJobLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 20,
+  keyGenerator: (req, res) => req.userId || ipKeyGenerator(req, res),
+  message: { error: 'You are posting jobs too quickly. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// ─── Resolve whether a user is a party (poster or accepted provider) to a job ───
+// Used to authorize job-scoped mutations so a third party can't upload proof
+// photos or file issue reports on jobs they aren't part of.
+function getJobParties(job, userId) {
+  const isPoster = String(job.posterId) === String(userId);
+  const acceptedApp = job.applications &&
+    job.applications.find(a => String(a._id) === String(job.acceptedApplicationId));
+  const isProvider = !!(acceptedApp && String(acceptedApp.applicantId) === String(userId));
+  return { isPoster, isProvider, isParty: isPoster || isProvider, acceptedApp };
 }
 
 // ─── GET /api/jobs — Browse / Nearby ───
@@ -313,7 +336,7 @@ router.get('/:id', async (req, res) => {
 });
 
 // ─── POST /api/jobs — Create job ───
-router.post('/', auth, upload.array('images', 10), async (req, res) => {
+router.post('/', auth, createJobLimiter, upload.array('images', 10), async (req, res) => {
   try {
     const { title, description, category, budget, budgetMin, budgetMax, isUrgent, lat, lng, scheduledDate, proposedTime, timeIsNegotiable, applicationDeadline, estimatedDuration, tags } = req.body;
 
@@ -844,8 +867,17 @@ router.post('/:id/report-issue', auth, upload.array('photos', 10), async (req, r
     const job = await Job.findById(req.params.id);
     if (!job) return res.status(404).json({ error: 'Job not found' });
 
+    // Only the poster or the accepted provider may report an issue on this job.
+    if (!getJobParties(job, req.userId).isParty) {
+      return res.status(403).json({ error: 'Not authorized for this job' });
+    }
+
+    const lat = req.body.lat != null ? parseFloat(req.body.lat) : undefined;
+    const lng = req.body.lng != null ? parseFloat(req.body.lng) : undefined;
+    const geo = (Number.isFinite(lat) && Number.isFinite(lng)) ? { lat, lng } : undefined;
     const photos = req.files ? req.files.map(f => ({
       url: `/uploads/proof/${f.filename}`,
+      location: geo,
       uploadedAt: new Date()
     })) : [];
 
@@ -872,6 +904,11 @@ router.post('/:id/upload-proof', auth, upload.array('photos', 10), async (req, r
     const job = await Job.findById(req.params.id);
     if (!job) return res.status(404).json({ error: 'Job not found' });
 
+    // Only the poster or the accepted provider may attach proof photos.
+    if (!getJobParties(job, req.userId).isParty) {
+      return res.status(403).json({ error: 'Not authorized for this job' });
+    }
+
     // Validate stage whitelist
     const validStages = ['before', 'during', 'after'];
     const cleanStage = validStages.includes(stage) ? stage : 'during';
@@ -885,10 +922,16 @@ router.post('/:id/upload-proof', auth, upload.array('photos', 10), async (req, r
       return res.status(413).json({ error: 'Maximum 10 photos allowed per upload' });
     }
 
+    // Geo-tag proof photos (sent by the in-app camera). One lat/lng applies to
+    // this capture batch; stored per-photo so completion evidence is verifiable.
+    const lat = req.body.lat != null ? parseFloat(req.body.lat) : undefined;
+    const lng = req.body.lng != null ? parseFloat(req.body.lng) : undefined;
+    const geo = (Number.isFinite(lat) && Number.isFinite(lng)) ? { lat, lng } : undefined;
     const photos = req.files.map(f => ({
       url: `/uploads/proof/${f.filename}`,
       uploadedBy: req.userId,
       stage: cleanStage,
+      location: geo,
       note: note ? sanitizeString(note, MAX_NOTE) : '',
       uploadedAt: new Date()
     }));

@@ -137,19 +137,29 @@ app.use('/downloads', express.static(path.join(__dirname, 'downloads'), {
   }
 }));
 
-// Serve static files from React build - supports both local and Render paths
-const buildPath = process.env.RENDER 
-  ? path.join(__dirname, 'client', 'build') 
-  : path.join(__dirname, '../client/build_v2');
+// Serve static files from the React build. The build lives at ./client/build
+// both locally and on Render, so resolve it the same way everywhere. (The old
+// ../client/build_v2 fallback pointed outside the repo and never existed,
+// which broke local serving of the SPA.)
+const buildPath = path.join(__dirname, 'client', 'build');
 app.use(express.static(buildPath));
 
 // MongoDB Connection with retry logic
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/gshop';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sebenza';
+
+// Production-safe Atlas connection options: fail fast on a bad primary,
+// keep a bounded pool, and don't let a single slow query hang forever.
+const MONGO_OPTIONS = {
+  serverSelectionTimeoutMS: 10000,
+  socketTimeoutMS: 45000,
+  maxPoolSize: 10,
+  family: 4
+};
 
 const connectWithRetry = async (retries = 5, delay = 5000) => {
   for (let i = 0; i < retries; i++) {
     try {
-      await mongoose.connect(MONGODB_URI);
+      await mongoose.connect(MONGODB_URI, MONGO_OPTIONS);
       console.log('Connected to MongoDB');
       mongoConnected = true;
       return true;
@@ -769,11 +779,7 @@ app.use('/api', (req, res) => {
 
 // Catch-all: serve React app for any non-API route
 app.get('*', (req, res) => {
-  // Serve React app for all other routes
-  const indexPath = process.env.RENDER 
-    ? path.join(__dirname, 'client', 'build', 'index.html') 
-    : path.join(__dirname, '../client/build_v2', 'index.html');
-  res.sendFile(indexPath);
+  res.sendFile(path.join(buildPath, 'index.html'));
 });
 
 // Error handling
@@ -796,7 +802,10 @@ app.use((err, req, res, next) => {
     return res.status(400).json({ error: err.message });
   }
   console.error(err.stack);
-  res.status(500).json({ error: 'Something went wrong!', details: err.message });
+  // Never leak internal error details/stack to clients in production.
+  const body = { error: 'Something went wrong!' };
+  if (!isProd) body.details = err.message;
+  res.status(500).json(body);
 });
 
 
@@ -874,14 +883,19 @@ io.on('connection', (socket) => {
 
   console.log('Client connected:', socket.id);
 
-  socket.on('register', (userId) => {
-    onlineUsers.set(String(userId), socket.id);
-    socket.userId = String(userId);
+  // SECURITY: never trust a client-supplied userId. The socket is already
+  // authenticated in io.use() above, which sets socket.userId from the verified
+  // JWT. Using the client's value here would let anyone claim another user's
+  // socket and receive their private notifications/messages.
+  socket.on('register', () => {
+    if (!socket.userId) return;
+    onlineUsers.set(socket.userId, socket.id);
   });
 
-  socket.on('user_online', async (userId) => {
+  socket.on('user_online', async () => {
+    const userId = socket.userId;
+    if (!userId) return;
     onlineUsers.set(userId, socket.id);
-    socket.userId = userId;
     if (mongoConnected && User) {
       try {
         await User.findByIdAndUpdate(userId, { isOnline: true, lastActive: new Date() });
@@ -891,8 +905,10 @@ io.on('connection', (socket) => {
     }
     socket.broadcast.emit('user_status_changed', { userId, isOnline: true });
   });
-  
-  socket.on('user_away', async (userId) => {
+
+  socket.on('user_away', async () => {
+    const userId = socket.userId;
+    if (!userId) return;
     if (mongoConnected && User) {
       try {
         await User.findByIdAndUpdate(userId, { isOnline: false, lastActive: new Date() });
@@ -908,7 +924,11 @@ io.on('connection', (socket) => {
   });
   
   socket.on('send_message', async (data) => {
-    const { transactionId, senderId, receiverId, text, type, offerAmount } = data;
+    const { transactionId, receiverId, text, type, offerAmount } = data;
+    // SECURITY: the sender is always the authenticated socket user, never a
+    // client-supplied id — otherwise a user could post messages as someone else.
+    const senderId = socket.userId;
+    if (!senderId) return;
     let savedMessage = null;
     if (mongoConnected && Message) {
       const message = new Message({

@@ -85,7 +85,7 @@ router.post('/send', auth, smsSendLimiter, async (req, res) => {
       const twilio = require('twilio');
       const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_TOKEN);
       await client.messages.create({
-        body: 'Your GShop verification code is: ' + code,
+        body: 'Your Sebenza verification code is: ' + code,
         from: process.env.TWILIO_PHONE,
         to: phone
       });
