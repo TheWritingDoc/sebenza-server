@@ -240,7 +240,7 @@ router.get('/', async (req, res) => {
 router.get('/my-jobs', auth, async (req, res) => {
   try {
     const jobs = await Job.find({ posterId: req.userId })
-      .populate('applications.applicantId', 'name avatar rating')
+      .populate('applications.applicantId', 'name avatar rating trustStars trustLevel verified emailVerified phoneVerified communityStats primaryCategory portfolioImages')
       .populate('acceptedApplicationId', 'applicantId')
       .sort({ createdAt: -1 });
     res.json(jobs.map(j => {
@@ -259,7 +259,7 @@ router.get('/my-applications', auth, async (req, res) => {
   try {
     const jobs = await Job.find({ 'applications.applicantId': req.userId })
       .populate('posterId', 'name avatar rating')
-      .populate('applications.applicantId', 'name avatar rating')
+      .populate('applications.applicantId', 'name avatar rating trustStars trustLevel verified emailVerified phoneVerified communityStats primaryCategory portfolioImages')
       .sort({ createdAt: -1 });
     res.json(jobs.map(j => {
       const obj = j.toObject();
@@ -281,7 +281,7 @@ router.get('/portfolio/:providerId', async (req, res) => {
       acceptedApplicationId: { $exists: true, $ne: null }
     })
       .populate('posterId', 'name avatar')
-      .populate('applications.applicantId', 'name avatar')
+      .populate('applications.applicantId', 'name avatar rating trustStars trustLevel verified emailVerified phoneVerified communityStats primaryCategory portfolioImages')
       .sort({ completedAt: -1 })
       .limit(50);
 
@@ -303,7 +303,7 @@ router.get('/:id', async (req, res) => {
   try {
     const job = await Job.findById(req.params.id)
       .populate('posterId', 'name avatar rating reviewCount')
-      .populate('applications.applicantId', 'name avatar rating')
+      .populate('applications.applicantId', 'name avatar rating trustStars trustLevel verified emailVerified phoneVerified communityStats primaryCategory portfolioImages')
       .populate('workProofPhotos.uploadedBy', 'name avatar');
 
     if (!job) return res.status(404).json({ error: 'Job not found' });

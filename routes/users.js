@@ -156,10 +156,19 @@ router.get('/me/trust', auth, async (req, res) => {
 router.get('/:id/trust', async (req, res) => {
   try {
     const user = await User.findById(req.params.id)
-      .select('trustDocs workExperience profileImage avatar verified emailVerified phoneVerified communityStats accountType businessName name')
+      .select('trustDocs workExperience profileImage avatar verified emailVerified phoneVerified communityStats accountType businessName name endorsedBy')
       .lean();
     if (!user) return res.status(404).json({ error: 'User not found' });
     const trust = computeTrust(user);
+    // If the caller is authenticated, tell them whether they've endorsed already.
+    let viewerEndorsed = false;
+    const token = req.headers.authorization?.split(' ')[1];
+    if (token) {
+      try {
+        const viewerId = jwt.verify(token, process.env.JWT_SECRET).userId;
+        viewerEndorsed = (user.endorsedBy || []).some(e => String(e.userId) === String(viewerId));
+      } catch (e) { /* anonymous */ }
+    }
     res.json({
       stars: trust.stars,
       level: trust.level,
@@ -167,6 +176,8 @@ router.get('/:id/trust', async (req, res) => {
       verified: !!user.verified,
       emailVerified: !!user.emailVerified,
       phoneVerified: !!user.phoneVerified,
+      recommendations: (user.endorsedBy || []).length,
+      viewerEndorsed,
       accountType: user.accountType || 'individual',
       businessName: user.businessName || '',
     });
@@ -287,6 +298,32 @@ router.post('/verify-email-code', auth, async (req, res) => {
     res.json({ message: 'Email verified', stars: trust?.stars, level: trust?.level, score: trust?.score });
   } catch (err) {
     console.error('Verify email code error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ===== RECOMMEND / ENDORSE A USER =====
+// "I vouch for this person." One endorsement per user; toggle on/off.
+router.post('/:id/endorse', auth, async (req, res) => {
+  try {
+    const targetId = req.params.id;
+    if (String(targetId) === String(req.user.userId)) {
+      return res.status(400).json({ error: 'You cannot recommend yourself' });
+    }
+    const target = await User.findById(targetId).select('endorsedBy name');
+    if (!target) return res.status(404).json({ error: 'User not found' });
+
+    const already = (target.endorsedBy || []).some(e => String(e.userId) === String(req.user.userId));
+    if (already) {
+      await User.findByIdAndUpdate(targetId, { $pull: { endorsedBy: { userId: req.user.userId } } });
+      const fresh = await User.findById(targetId).select('endorsedBy');
+      return res.json({ endorsed: false, count: fresh.endorsedBy.length });
+    }
+    await User.findByIdAndUpdate(targetId, { $addToSet: { endorsedBy: { userId: req.user.userId, at: new Date() } } });
+    const fresh = await User.findById(targetId).select('endorsedBy');
+    res.json({ endorsed: true, count: fresh.endorsedBy.length });
+  } catch (err) {
+    console.error('Endorse error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });

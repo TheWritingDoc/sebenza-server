@@ -3,6 +3,7 @@ import axios from 'axios';
 import { getImageUrl, PLACEHOLDER_IMG, modalOverlayStyle, modalContentStyle, MAX_NEGOTIATION_ROUNDS } from '../shared/constants';
 import { scrollToRef, blurActiveInput, mobileFieldFocusScroll } from '../shared/workflowFocus';
 import { UserCircle } from './Icons';
+import { TrustStars } from './TrustCenter';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -250,6 +251,8 @@ function JobApplicantsModal({ job, user, onClose, onUpdated, onViewPortfolio }) 
     const reliability = applicant?.communityStats?.reliabilityScore ?? 100;
     const rating = applicant?.rating > 0 ? applicant.rating : null;
     const jobsCompleted = applicant?.communityStats?.jobsCompleted ?? 0;
+    const trustStars = applicant?.trustStars ?? 0;
+    const isVerified = !!applicant?.verified;
     const portfolioImages = (applicant?.portfolioImages || []).filter(img => img && (img.url || typeof img === 'string'));
 
     return (
@@ -281,6 +284,18 @@ function JobApplicantsModal({ job, user, onClose, onUpdated, onViewPortfolio }) 
                   </span>
                 )}
               </div>
+            </div>
+            {/* Identity trust — how well this person has proven who they are */}
+            <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+              <TrustStars stars={trustStars} size={14} />
+              {isVerified && (
+                <span style={{ fontSize: 10, fontWeight: 800, background: '#dbeafe', color: '#1d4ed8', padding: '2px 8px', borderRadius: 999, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
+                  🪪 ID Verified
+                </span>
+              )}
+              {applicant?.trustLevel && (
+                <span style={{ fontSize: 10, color: '#94a3b8', fontWeight: 700 }}>{applicant.trustLevel}</span>
+              )}
             </div>
             <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
               {isHigherThanBudget && (

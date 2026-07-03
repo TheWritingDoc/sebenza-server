@@ -126,6 +126,12 @@ const userSchema = new mongoose.Schema({
     uploadedAt: { type: Date, default: Date.now }
   }],
 
+  // Community recommendations ("I vouch for this person"). One per endorser.
+  endorsedBy: [{
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    at: { type: Date, default: Date.now }
+  }],
+
   // Work experience entries (no document required)
   workExperience: [{
     title: { type: String, required: true },

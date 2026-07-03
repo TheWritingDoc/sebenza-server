@@ -16,6 +16,9 @@ function PublicProfile() {
   const [profile, setProfile] = useState(null);
   const [trust, setTrust] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [rec, setRec] = useState({ count: 0, endorsed: false });
+  const [endorsing, setEndorsing] = useState(false);
+  const token = localStorage.getItem('token');
 
   useEffect(() => {
     fetchProfile();
@@ -26,13 +29,30 @@ function PublicProfile() {
       const res = await axios.get(`${API_URL}/api/users/${id}`);
       setProfile(res.data);
       try {
-        const trustRes = await axios.get(`${API_URL}/api/users/${id}/trust`);
+        const trustRes = await axios.get(`${API_URL}/api/users/${id}/trust`, {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+        });
         setTrust(trustRes.data);
+        setRec({ count: trustRes.data.recommendations || 0, endorsed: !!trustRes.data.viewerEndorsed });
       } catch { setTrust(null); }
     } catch (err) {
       console.error('Fetch profile error:', err);
     }
     setLoading(false);
+  };
+
+  const toggleEndorse = async () => {
+    if (!token) { navigate('/login'); return; }
+    setEndorsing(true);
+    try {
+      const res = await axios.post(`${API_URL}/api/users/${id}/endorse`, {}, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      setRec({ count: res.data.count, endorsed: res.data.endorsed });
+    } catch (err) {
+      console.error('Endorse failed:', err);
+    }
+    setEndorsing(false);
   };
 
   const statusColors = { online: '#22c55e', away: '#f59e0b', offline: '#9ca3af' };
@@ -128,7 +148,49 @@ function PublicProfile() {
             padding: '4px 12px', borderRadius: '12px', fontSize: '12px', fontWeight: 600
           }}>✓ Verified</span>
         )}
+
+        {/* Recommend / endorse */}
+        <div style={{ marginTop: 16 }}>
+          <button onClick={toggleEndorse} disabled={endorsing} style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8, minHeight: 44,
+            padding: '10px 20px', borderRadius: 999, cursor: 'pointer', fontSize: 14, fontWeight: 700,
+            border: rec.endorsed ? 'none' : '2px solid #e2e8f0',
+            background: rec.endorsed ? 'linear-gradient(135deg,#22c55e,#16a34a)' : 'white',
+            color: rec.endorsed ? 'white' : '#334155', transition: 'all 0.2s',
+          }}>
+            {rec.endorsed ? '👍 Recommended' : '👍 Recommend'}
+            {rec.count > 0 && (
+              <span style={{
+                background: rec.endorsed ? 'rgba(255,255,255,0.25)' : '#f1f5f9',
+                color: rec.endorsed ? 'white' : '#475569',
+                borderRadius: 999, padding: '1px 8px', fontSize: 12, fontWeight: 800,
+              }}>{rec.count}</span>
+            )}
+          </button>
+          {rec.count > 0 && (
+            <div style={{ fontSize: 12, color: '#94a3b8', marginTop: 6 }}>
+              {rec.count} neighbour{rec.count === 1 ? '' : 's'} vouch for {profile.name?.split(' ')[0]}
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* Work experience */}
+      {profile.workExperience?.length > 0 && (
+        <div style={{ background: 'white', borderRadius: '16px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', marginTop: '16px' }}>
+          <h3 style={{ margin: '0 0 12px', fontSize: '16px', fontWeight: 600 }}>💼 Work Experience</h3>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+            {profile.workExperience.map((w, i) => (
+              <div key={i} style={{ padding: '12px 14px', borderRadius: '10px', background: '#f8fafc', border: '1px solid #f1f5f9' }}>
+                <div style={{ fontWeight: 600, fontSize: '14px', color: '#1e293b' }}>{w.title}</div>
+                <div style={{ fontSize: '12px', color: '#64748b', marginTop: 2 }}>
+                  {[w.place, w.years].filter(Boolean).join(' · ')}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Skills */}
       {profile.skills?.length > 0 && (
