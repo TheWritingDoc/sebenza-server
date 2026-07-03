@@ -110,6 +110,10 @@ const userSchema = new mongoose.Schema({
   businessName: { type: String, default: '' },   // team or business display name
   teamSize: { type: Number, default: 1 },
 
+  // Team membership: a worker linked under a supervisor's Team (see models/Team)
+  teamId: { type: mongoose.Schema.Types.ObjectId, ref: 'Team', default: null },
+  teamRole: { type: String, enum: ['supervisor', 'lead', 'member', null], default: null },
+
   // Identity trust stars (0–5) — computed by utils/trustScore from the
   // verifications/documents below. SEPARATE from review performance. Cached
   // here so job cards / map pins / profiles can show them without recomputing.

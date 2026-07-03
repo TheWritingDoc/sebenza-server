@@ -22,6 +22,7 @@ const ProviderPortfolio = lazy(() => import('./components/ProviderPortfolio'));
 const PublicProfile = lazy(() => import('./components/PublicProfile'));
 const Chat = lazy(() => import('./components/Chat'));
 const JobBoard = lazy(() => import('./components/JobBoard'));
+const TeamManager = lazy(() => import('./components/TeamManager'));
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -273,6 +274,7 @@ function App() {
               <Route path="/work" element={user ? <WorkHistory /> : <Navigate to="/login" />} />
               <Route path="/create-service" element={user ? <CreateService user={user} onServiceCreated={handleServiceCreated} /> : <Navigate to="/login" />} />
               <Route path="/user/:id" element={<PublicProfile />} />
+              <Route path="/team" element={user ? <TeamManager user={user} /> : <Navigate to="/login" />} />
               <Route path="/invite" element={<InvitePage />} />
               <Route path="*" element={<Navigate to={user ? '/dashboard' : '/'} replace />} />
             </Routes>

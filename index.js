@@ -257,6 +257,7 @@ if (useMongoDB) {
   app.use('/api/jobs', jobRoutes);
   app.use('/api/notifications', require('./routes/notifications'));
   app.use('/api/admin', adminRoutes);
+  app.use('/api/teams', require('./routes/teams'));
 
   // Versioned routes (v1)
   app.use(`${API_VERSION}/verification`, verificationRoutes);
