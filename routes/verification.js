@@ -3,6 +3,7 @@ const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const upload = require('../middleware/upload');
+const { uploadFile } = require('../middleware/upload');
 const Verification = require('../models/Verification');
 const jwt = require('jsonwebtoken');
 
@@ -57,11 +58,17 @@ router.post('/upload', auth, upload.fields([
       return res.status(400).json({ error: 'Verification already submitted' });
     }
 
+    const [idFrontUrl, idBackUrl, selfieUrl] = await Promise.all([
+      uploadFile(req.files.idFront[0], 'kyc/ids'),
+      uploadFile(req.files.idBack[0], 'kyc/ids'),
+      uploadFile(req.files.selfie[0], 'kyc/selfies')
+    ]);
+
     const verification = new Verification({
       userId: req.userId,
-      idFront: req.files.idFront[0].filename,
-      idBack: req.files.idBack[0].filename,
-      selfie: req.files.selfie[0].filename,
+      idFront: idFrontUrl,
+      idBack: idBackUrl,
+      selfie: selfieUrl,
       idNumber: req.body.idNumber || null
     });
 
@@ -129,13 +136,18 @@ router.get('/documents/:type', auth, async (req, res) => {
     if (!verification || !verification[type]) {
       return res.status(404).json({ error: 'Document not found' });
     }
-    const filename = verification[type];
-    const folder = type === 'selfie' ? 'selfies' : 'ids';
-    const filePath = path.join(__dirname, '..', 'uploads', folder, filename);
-    if (!fs.existsSync(filePath)) {
-      return res.status(404).json({ error: 'File not found' });
+    const fileUrl = verification[type];
+    if (!fileUrl.startsWith('http')) {
+      // Legacy local file fallback: only available when Cloudinary is not enabled.
+      const folder = type === 'selfie' ? 'selfies' : 'ids';
+      const filePath = path.join(__dirname, '..', 'uploads', folder, fileUrl.replace(/^\/uploads\//, ''));
+      if (!fs.existsSync(filePath)) {
+        return res.status(404).json({ error: 'File not found' });
+      }
+      return res.sendFile(filePath);
     }
-    res.sendFile(filePath);
+    // Cloudinary URL: redirect through the authenticated gate.
+    res.redirect(fileUrl);
   } catch (err) {
     console.error('Document fetch error:', err);
     res.status(500).json({ error: 'Server error' });

@@ -6,7 +6,9 @@ const Job = require('../models/Job');
 const User = require('../models/User');
 const Transaction = require('../models/Transaction');
 const Review = require('../models/Review');
+const Notification = require('../models/Notification');
 const upload = require('../middleware/upload');
+const { uploadFiles } = require('../middleware/upload');
 const jwt = require('jsonwebtoken');
 const { sendNotification } = require('../utils/notifications');
 
@@ -375,11 +377,14 @@ router.post('/', auth, createJobLimiter, upload.array('images', 10), async (req,
     const cleanCategory = sanitizeString(category, MAX_CATEGORY);
     const cleanTags = tags ? (Array.isArray(tags) ? tags : tags.split(',')).map(t => sanitizeString(t, MAX_TAG)).filter(Boolean) : [];
 
-    const images = req.files ? req.files.map(f => ({
-      url: `/uploads/proof/${f.filename}`,
+    const uploadedImageUrls = req.files && req.files.length > 0
+      ? await uploadFiles(req.files, 'jobs')
+      : [];
+    const images = uploadedImageUrls.map(url => ({
+      url,
       caption: '',
       uploadedAt: new Date()
-    })) : [];
+    }));
 
     const job = new Job({
       posterId: req.userId,
@@ -875,11 +880,12 @@ router.post('/:id/report-issue', auth, upload.array('photos', 10), async (req, r
     const lat = req.body.lat != null ? parseFloat(req.body.lat) : undefined;
     const lng = req.body.lng != null ? parseFloat(req.body.lng) : undefined;
     const geo = (Number.isFinite(lat) && Number.isFinite(lng)) ? { lat, lng } : undefined;
-    const photos = req.files ? req.files.map(f => ({
-      url: `/uploads/proof/${f.filename}`,
+    const photoUrls = req.files && req.files.length > 0 ? await uploadFiles(req.files, 'proof') : [];
+    const photos = photoUrls.map(url => ({
+      url,
       location: geo,
       uploadedAt: new Date()
-    })) : [];
+    }));
 
     job.issueReports.push({
       reporterId: req.userId,
@@ -927,8 +933,9 @@ router.post('/:id/upload-proof', auth, upload.array('photos', 10), async (req, r
     const lat = req.body.lat != null ? parseFloat(req.body.lat) : undefined;
     const lng = req.body.lng != null ? parseFloat(req.body.lng) : undefined;
     const geo = (Number.isFinite(lat) && Number.isFinite(lng)) ? { lat, lng } : undefined;
-    const photos = req.files.map(f => ({
-      url: `/uploads/proof/${f.filename}`,
+    const photoUrls = req.files && req.files.length > 0 ? await uploadFiles(req.files, 'proof') : [];
+    const photos = photoUrls.map(url => ({
+      url,
       uploadedBy: req.userId,
       stage: cleanStage,
       location: geo,
@@ -968,10 +975,11 @@ router.post('/:id/stop-job', auth, upload.array('stopPhotos', 10), async (req, r
       return res.status(413).json({ error: 'Maximum 10 stop photos allowed' });
     }
 
-    const stopPhotos = req.files ? req.files.map(f => ({
-      url: `/uploads/proof/${f.filename}`,
+    const stopPhotoUrls = req.files && req.files.length > 0 ? await uploadFiles(req.files, 'proof') : [];
+    const stopPhotos = stopPhotoUrls.map(url => ({
+      url,
       uploadedAt: new Date()
-    })) : [];
+    }));
 
     job.issueReports.push({
       reporterId: req.userId,
@@ -1004,12 +1012,13 @@ router.post('/:id/complete', auth, upload.array('photos', 10), async (req, res) 
 
     if (job.status !== 'in_progress') return res.status(400).json({ error: `Cannot complete: job is ${job.status}` });
 
-    const photos = req.files ? req.files.map(f => ({
-      url: `/uploads/proof/${f.filename}`,
+    const completionPhotoUrls = req.files && req.files.length > 0 ? await uploadFiles(req.files, 'proof') : [];
+    const photos = completionPhotoUrls.map(url => ({
+      url,
       lat: req.body.lat ? parseFloat(req.body.lat) : undefined,
       lng: req.body.lng ? parseFloat(req.body.lng) : undefined,
       uploadedAt: new Date()
-    })) : [];
+    }));
 
     job.status = 'pending_review';
     job.helperCompletedAt = new Date();
@@ -1049,10 +1058,11 @@ router.post('/:id/confirm-completion', auth, upload.array('photos', 10), async (
       return res.status(400).json({ error: 'Rating must be an integer between 1 and 5' });
     }
 
-    const photos = req.files ? req.files.map(f => ({
-      url: `/uploads/proof/${f.filename}`,
+    const confirmPhotoUrls = req.files && req.files.length > 0 ? await uploadFiles(req.files, 'proof') : [];
+    const photos = confirmPhotoUrls.map(url => ({
+      url,
       uploadedAt: new Date()
-    })) : [];
+    }));
 
     job.status = 'pending_payment';
     job.posterConfirmedAt = new Date();

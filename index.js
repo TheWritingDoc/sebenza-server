@@ -120,13 +120,8 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 // header, which makes CSRF cookie-based protection unnecessary and breaks cross-origin
 // mobile/WebView clients. XSS is mitigated by input validation, Helmet, and CSP.
 
-// Serve public uploads only. KYC documents (ids/selfies) must NOT be public.
-const UPLOADS_BASE = path.join(__dirname, '..', 'uploads');
-app.use('/uploads/profiles', express.static(path.join(UPLOADS_BASE, 'profiles')));
-app.use('/uploads/proof', express.static(path.join(UPLOADS_BASE, 'proof')));
-app.use('/uploads/services', express.static(path.join(UPLOADS_BASE, 'services')));
-app.use('/uploads/jobs', express.static(path.join(UPLOADS_BASE, 'jobs')));
-// ids/selfies are gated below via /api/verification/documents/:type/:filename
+// Uploads are persisted to Cloudinary, not local disk. See middleware/upload.js.
+// No /uploads/* static routes are exposed.
 
 // Serve APK downloads with correct MIME type
 app.use('/downloads', express.static(path.join(__dirname, 'downloads'), {
@@ -548,7 +543,8 @@ app.post('/api/users/profile-image', auth, upload.single('profileImage'), async 
 
     
 
-    const imageUrl = `/uploads/profiles/${req.file.filename}`;
+    const { uploadFile } = require('./middleware/upload');
+    const imageUrl = await uploadFile(req.file, 'profiles');
 
     
 

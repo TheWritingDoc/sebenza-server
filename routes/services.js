@@ -2,6 +2,7 @@
 const router = express.Router();
 const Service = require('../models/Service');
 const upload = require('../middleware/upload');
+const { uploadFiles } = require('../middleware/upload');
 const jwt = require('jsonwebtoken');
 const { sendNotification } = require('../utils/notifications');
 
@@ -175,11 +176,12 @@ router.post('/create', auth, upload.array('images', 10), async (req, res) => {
     }
 
     // Handle uploaded images
-    const serviceImages = req.files ? req.files.map(file => ({
-      url: `/uploads/services/${file.filename}`,
+    const serviceImageUrls = req.files && req.files.length > 0 ? await uploadFiles(req.files, 'services') : [];
+    const images = serviceImageUrls.map(url => ({
+      url,
       caption: '',
       uploadedAt: new Date()
-    })) : [];
+    }));
 
     const lockOnMap = mapPinLocked === undefined ? true : String(mapPinLocked) !== 'false';
     const requestedVisibility = mapVisibility === 'hidden' ? 'hidden' : 'public';
