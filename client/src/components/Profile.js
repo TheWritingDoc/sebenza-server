@@ -6,6 +6,30 @@ const API_URL = process.env.REACT_APP_API_URL || '';
 function Profile({ user, setUser }) {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const [photoBusy, setPhotoBusy] = useState(false);
+
+  const uploadPhoto = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhotoBusy(true);
+    setMessage('');
+    try {
+      const token = localStorage.getItem('token');
+      const data = new FormData();
+      data.append('profileImage', file);
+      const res = await axios.post(`${API_URL}/api/users/profile-image`, data, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' }
+      });
+      const updated = { ...user, profileImage: res.data.imageUrl };
+      setUser(updated);
+      localStorage.setItem('sebenza_user', JSON.stringify(updated));
+      setMessage('Profile photo updated successfully!');
+    } catch (err) {
+      setMessage(err.response?.data?.error || 'Failed to upload photo. Please try again.');
+    }
+    setPhotoBusy(false);
+    e.target.value = '';
+  };
   const [formData, setFormData] = useState({
     name: user?.name || '',
     email: user?.email || '',
@@ -52,14 +76,24 @@ function Profile({ user, setUser }) {
         border: '1px solid #f1f5f9', boxShadow: '0 1px 3px rgba(0,0,0,0.04)' 
       }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <div style={{
-            width: 80, height: 80, borderRadius: '50%', margin: '0 auto 12px',
-            background: user?.profileImage ? `url(${API_URL}${user.profileImage}) center/cover` : 'linear-gradient(135deg, #6366f1, #4f46e5)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 32, color: 'white', fontWeight: 700
-          }}>
-            {!user?.profileImage && (user?.name?.charAt(0).toUpperCase() || '?')}
-          </div>
+          <input type="file" accept="image/*" capture="user" onChange={uploadPhoto} id="profile-photo-input" style={{ display: 'none' }} />
+          <label htmlFor="profile-photo-input" style={{ cursor: 'pointer', display: 'inline-block', position: 'relative' }}>
+            <div style={{
+              width: 80, height: 80, borderRadius: '50%', margin: '0 auto',
+              background: user?.profileImage ? `url(${API_URL}${user.profileImage}) center/cover` : 'linear-gradient(135deg, #6366f1, #4f46e5)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 32, color: 'white', fontWeight: 700,
+              opacity: photoBusy ? 0.5 : 1
+            }}>
+              {!user?.profileImage && (user?.name?.charAt(0).toUpperCase() || '?')}
+            </div>
+            <span style={{
+              position: 'absolute', bottom: 0, right: -2, width: 28, height: 28, borderRadius: '50%',
+              background: '#4f46e5', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 14, border: '2px solid white'
+            }}>📷</span>
+          </label>
+          <p style={{ fontSize: 12, color: '#94a3b8', margin: '6px 0 8px' }}>{photoBusy ? 'Uploading…' : 'Tap to add a photo of yourself'}</p>
           <h2 style={{ fontSize: 18, fontWeight: 700, color: '#1e293b' }}>{user?.name || 'User'}</h2>
           <p style={{ fontSize: 13, color: '#64748b' }}>{user?.email}</p>
         </div>

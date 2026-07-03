@@ -18,6 +18,8 @@ function PublicProfile() {
   const [loading, setLoading] = useState(true);
   const [rec, setRec] = useState({ count: 0, endorsed: false });
   const [endorsing, setEndorsing] = useState(false);
+  const [verifiedWork, setVerifiedWork] = useState([]);
+  const [photoView, setPhotoView] = useState(null);
   const token = localStorage.getItem('token');
 
   useEffect(() => {
@@ -35,6 +37,10 @@ function PublicProfile() {
         setTrust(trustRes.data);
         setRec({ count: trustRes.data.recommendations || 0, endorsed: !!trustRes.data.viewerEndorsed });
       } catch { setTrust(null); }
+      try {
+        const workRes = await axios.get(`${API_URL}/api/users/${id}/verified-work`);
+        setVerifiedWork(workRes.data.work || []);
+      } catch { setVerifiedWork([]); }
     } catch (err) {
       console.error('Fetch profile error:', err);
     }
@@ -174,6 +180,59 @@ function PublicProfile() {
           )}
         </div>
       </div>
+
+      {/* Verified work — only jobs completed and proven through the app */}
+      {verifiedWork.length > 0 && (
+        <div style={{ background: 'white', borderRadius: '16px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', marginTop: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>🛠️ Verified Work</h3>
+            <span style={{ background: '#d1fae5', color: '#065f46', padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700 }}>
+              ✓ Verified by Sebenza
+            </span>
+          </div>
+          <p style={{ fontSize: 12, color: '#94a3b8', margin: '0 0 12px' }}>
+            Real jobs completed through the app, with photos taken on site.
+          </p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {verifiedWork.map(w => (
+              <div key={w.jobId} style={{ padding: '12px 14px', borderRadius: '12px', background: '#f8fafc', border: '1px solid #f1f5f9' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: '14px', color: '#1e293b' }}>{w.title}</div>
+                    <div style={{ fontSize: '12px', color: '#64748b', marginTop: 2 }}>
+                      {[w.category, w.completedAt && new Date(w.completedAt).toLocaleDateString()].filter(Boolean).join(' · ')}
+                    </div>
+                  </div>
+                  {w.rating && (
+                    <span style={{ fontSize: 12, color: '#f59e0b', fontWeight: 700, whiteSpace: 'nowrap' }}>
+                      {'⭐'.repeat(w.rating)}
+                    </span>
+                  )}
+                </div>
+                {w.photos?.length > 0 && (
+                  <div style={{ display: 'flex', gap: 6, marginTop: 10, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                    {w.photos.map((p, i) => (
+                      <img key={i} src={p.url.startsWith('http') ? p.url : `${API_URL}${p.url}`} alt={`${w.title} — on-site photo`}
+                        onClick={() => setPhotoView(p.url.startsWith('http') ? p.url : `${API_URL}${p.url}`)}
+                        style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 10, flexShrink: 0, cursor: 'pointer', border: '1px solid #e2e8f0' }} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Full-screen photo viewer */}
+      {photoView && (
+        <div onClick={() => setPhotoView(null)} style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 1000,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, cursor: 'zoom-out'
+        }}>
+          <img src={photoView} alt="Work" style={{ maxWidth: '100%', maxHeight: '90vh', borderRadius: 12 }} />
+        </div>
+      )}
 
       {/* Work experience */}
       {profile.workExperience?.length > 0 && (

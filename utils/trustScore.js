@@ -22,6 +22,7 @@ const TRUST_ITEMS = [
   { key: 'phone',         label: 'Verify your phone',    points: 10, action: 'phone' },
   { key: 'id',            label: 'Verify your ID',       points: 30, action: 'id' },
   { key: 'address',       label: 'Proof of address',     points: 10, action: 'address' },
+  { key: 'license',       label: "Driver's licence",     points: 10, action: 'license' },
   { key: 'qualification', label: 'Add a qualification',  points: 10, action: 'qualification' },
   { key: 'experience',    label: 'Add work experience',  points: 10, action: 'experience' },
   { key: 'firstJob',      label: 'Complete a job',       points: 5,  action: null,            auto: true },
@@ -43,6 +44,7 @@ function isItemDone(user, key) {
     case 'phone':         return !!user.phoneVerified;
     case 'id':            return !!user.verified; // set true when KYC is approved
     case 'address':       return hasApprovedOrPendingDoc(user, 'address');
+    case 'license':       return hasApprovedOrPendingDoc(user, 'drivers_license');
     case 'qualification': return hasApprovedOrPendingDoc(user, 'qualification');
     case 'experience':    return (Array.isArray(user.workExperience) && user.workExperience.length > 0) ||
                                  hasApprovedOrPendingDoc(user, 'experience');

@@ -57,6 +57,7 @@ test('fully verified profile = 100 score, 5 stars, Fully Verified', () => {
     emailVerified: true, profileImage: '/me.jpg', phoneVerified: true, verified: true,
     trustDocs: [
       { docType: 'address', status: 'approved' },
+      { docType: 'drivers_license', status: 'approved' },
       { docType: 'qualification', status: 'approved' },
     ],
     workExperience: [{ title: 'Plumbing, 5 years' }],

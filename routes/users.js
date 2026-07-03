@@ -219,6 +219,54 @@ router.post('/trust-docs', auth, upload.single('trustDoc'), async (req, res) => 
   }
 });
 
+// Verified work: jobs this user completed THROUGH the app, with the proof
+// photos they took during the job (camera-only, geo-tagged) and the poster's
+// rating. Nothing here is self-uploaded — it's the app-verified track record.
+router.get('/:id/verified-work', async (req, res) => {
+  try {
+    if (!/^[a-f0-9]{24}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid user id' });
+    const Job = require('../models/Job');
+    const jobs = await Job.find({
+      status: 'completed',
+      'applications.applicantId': req.params.id,
+    })
+      .select('title category completedAt posterReview.overallRating workProofPhotos completionRequest applications.applicantId applications.status acceptedApplicationId applications._id')
+      .sort({ completedAt: -1 })
+      .limit(30)
+      .lean();
+
+    const work = [];
+    for (const j of jobs) {
+      // Only count the job if THIS user was the accepted worker on it.
+      const accepted = (j.applications || []).find(a => String(a._id) === String(j.acceptedApplicationId));
+      if (!accepted || String(accepted.applicantId) !== String(req.params.id)) continue;
+
+      const photos = [
+        ...(j.workProofPhotos || [])
+          .filter(p => String(p.uploadedBy) === String(req.params.id) && p.url)
+          .map(p => ({ url: p.url, stage: p.stage })),
+        ...((j.completionRequest?.initiatorPhotos || [])
+          .filter(p => p.url)
+          .map(p => ({ url: p.url, stage: 'after' }))),
+      ].slice(0, 6);
+
+      work.push({
+        jobId: j._id,
+        title: j.title,
+        category: j.category,
+        completedAt: j.completedAt,
+        rating: j.posterReview?.overallRating || null,
+        photos,
+      });
+      if (work.length >= 12) break;
+    }
+    res.json({ work, count: work.length });
+  } catch (err) {
+    console.error('Verified work error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // Add a work-experience entry (no document required — self-declared)
 router.post('/work-experience', auth, async (req, res) => {
   try {

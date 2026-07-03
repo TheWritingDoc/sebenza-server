@@ -1,6 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
-import { useNavigate } from 'react-router-dom';
 import SMSVerify from './SMSVerify';
 import Verification from './Verification';
 
@@ -34,6 +33,7 @@ const ITEM_META = {
   phone:         { icon: '📱', hint: 'Verify with a one-time SMS code' },
   id:            { icon: '🪪', hint: 'Upload your SA ID — biggest trust boost' },
   address:       { icon: '🏠', hint: 'Utility bill or bank letter' },
+  license:       { icon: '🚗', hint: "Photo of your driver's licence card" },
   qualification: { icon: '🎓', hint: 'Certificate, trade ticket or diploma' },
   experience:    { icon: '💼', hint: 'Tell neighbours what you’ve done before' },
   firstJob:      { icon: '🏆', hint: 'Complete your first job on the app' },
@@ -106,6 +106,71 @@ function DocUpload({ docType, label, onDone }) {
       <button onClick={submit} disabled={loading || !file}
         className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 disabled:bg-gray-300 transition-all text-sm">
         {loading ? 'Uploading...' : 'Submit Document'}
+      </button>
+    </div>
+  );
+}
+
+function SelfieUpload({ user, setUser, onDone }) {
+  const [preview, setPreview] = useState(null);
+  const [file, setFile] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
+  const token = localStorage.getItem('token');
+
+  const pick = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f);
+    setPreview(URL.createObjectURL(f));
+  };
+
+  const submit = async () => {
+    if (!file) { setMessage('Please take or choose a photo of yourself'); return; }
+    setLoading(true); setMessage('');
+    try {
+      const data = new FormData();
+      data.append('profileImage', file);
+      const res = await axios.post(`${API_URL}/api/users/profile-image`, data, {
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' }
+      });
+      if (setUser && user) {
+        const updated = { ...user, profileImage: res.data.imageUrl };
+        setUser(updated);
+        localStorage.setItem('sebenza_user', JSON.stringify(updated));
+      }
+      setMessage('✅ Photo added! Your trust score has been updated.');
+      setTimeout(onDone, 1100);
+    } catch (err) {
+      setMessage(err.response?.data?.error || 'Upload failed');
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-4">
+      {message && (
+        <div className={`p-3 rounded-xl text-center text-sm font-medium ${message.startsWith('✅') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+          {message}
+        </div>
+      )}
+      <div className="border-2 border-dashed border-gray-300 rounded-xl p-5 text-center hover:border-blue-500 transition-colors">
+        <input type="file" accept="image/*" capture="user" onChange={pick} className="hidden" id="selfie-input" />
+        <label htmlFor="selfie-input" className="cursor-pointer block">
+          {preview ? (
+            <img src={preview} alt="Your face" className="w-32 h-32 object-cover rounded-full mx-auto mb-2" />
+          ) : (
+            <>
+              <div className="text-3xl mb-1">🤳</div>
+              <p className="text-gray-600 text-sm font-medium">Tap to take a photo of yourself</p>
+            </>
+          )}
+          <p className="text-gray-400 text-xs mt-1">{preview ? 'Tap to retake' : 'A clear face photo helps neighbours recognise you'}</p>
+        </label>
+      </div>
+      <button onClick={submit} disabled={loading || !file}
+        className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 disabled:bg-gray-300 transition-all text-sm">
+        {loading ? 'Uploading...' : 'Save My Photo'}
       </button>
     </div>
   );
@@ -271,7 +336,6 @@ function PhoneStep({ user, onDone }) {
 }
 
 function TrustCenter({ user, setUser }) {
-  const navigate = useNavigate();
   const [trust, setTrust] = useState(null);
   const [active, setActive] = useState(null); // null = checklist, else item key
   const token = localStorage.getItem('token');
@@ -330,17 +394,10 @@ function TrustCenter({ user, setUser }) {
           {active === 'phone' && <PhoneStep user={user} onDone={handlePhoneVerified} />}
           {active === 'id' && <Verification embedded onStatusChange={closeStep} />}
           {active === 'address' && <DocUpload docType="address" label="Proof of address" onDone={closeStep} />}
+          {active === 'license' && <DocUpload docType="drivers_license" label="Driver's licence" onDone={closeStep} />}
           {active === 'qualification' && <DocUpload docType="qualification" label="Qualification" onDone={closeStep} />}
           {active === 'experience' && <ExperienceForm onDone={closeStep} />}
-          {active === 'photo' && (
-            <div className="text-center space-y-4">
-              <p className="text-gray-600 text-sm">Add your profile photo from your profile page.</p>
-              <button onClick={() => navigate('/profile')}
-                className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 transition-all text-sm">
-                Go to My Profile
-              </button>
-            </div>
-          )}
+          {active === 'photo' && <SelfieUpload user={user} setUser={setUser} onDone={closeStep} />}
         </div>
       </div>
     );
