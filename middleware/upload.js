@@ -12,12 +12,11 @@ cloudinary.config({
 });
 
 const isProd = process.env.NODE_ENV === 'production';
-if (isProd && (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET)) {
-  console.error('FATAL: Cloudinary credentials must be set in production');
-  process.exit(1);
-}
-
 const cloudinaryEnabled = !!(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
+
+if (isProd && !cloudinaryEnabled) {
+  console.warn('WARNING: Cloudinary credentials are not set in production. Uploads will fall back to local disk and will be lost on redeploy. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET to enable persistent uploads.');
+}
 
 // Fallback disk storage for local development when Cloudinary is not configured.
 // This keeps `npm run dev` working without credentials, but production is protected

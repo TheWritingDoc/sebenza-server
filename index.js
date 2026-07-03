@@ -120,8 +120,19 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 // header, which makes CSRF cookie-based protection unnecessary and breaks cross-origin
 // mobile/WebView clients. XSS is mitigated by input validation, Helmet, and CSP.
 
-// Uploads are persisted to Cloudinary, not local disk. See middleware/upload.js.
-// No /uploads/* static routes are exposed.
+// When Cloudinary is not configured, uploads fall back to local disk. Mount the
+// fallback static routes only in that case. Once Cloudinary env vars are set,
+// remove these routes and uploads are served from Cloudinary URLs.
+const { cloudinaryEnabled } = require('./middleware/upload');
+const UPLOADS_BASE = path.join(__dirname, 'uploads');
+if (!cloudinaryEnabled) {
+  app.use('/uploads/profiles', express.static(path.join(UPLOADS_BASE, 'profiles')));
+  app.use('/uploads/proof', express.static(path.join(UPLOADS_BASE, 'proof')));
+  app.use('/uploads/services', express.static(path.join(UPLOADS_BASE, 'services')));
+  app.use('/uploads/jobs', express.static(path.join(UPLOADS_BASE, 'jobs')));
+  // KYC documents are always served through the authenticated /api/verification/documents
+  // endpoint, even in local fallback mode, so do not expose /uploads/ids or /uploads/selfies.
+}
 
 // Serve APK downloads with correct MIME type
 app.use('/downloads', express.static(path.join(__dirname, 'downloads'), {
