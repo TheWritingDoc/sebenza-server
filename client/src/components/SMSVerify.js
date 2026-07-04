@@ -8,12 +8,14 @@ function SMSVerify({ phone, onVerified }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
+  const [demoCode, setDemoCode] = useState('');
 
   const sendCode = async () => {
     setLoading(true);
     setError('');
     try {
-      await axios.post(`${API_URL}/api/sms/send-code`, { phone });
+      const res = await axios.post(`${API_URL}/api/sms/send-code`, { phone });
+      if (res.data.demo && res.data.code) setDemoCode(res.data.code);
       setSent(true);
     } catch (err) {
       setError('Failed to send code. Please try again.');
@@ -59,6 +61,11 @@ function SMSVerify({ phone, onVerified }) {
         </button>
       ) : (
         <form onSubmit={verifyCode} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {demoCode && (
+            <div style={{ padding: 10, borderRadius: 12, background: '#fffbeb', color: '#92400e', fontSize: 13, textAlign: 'center' }}>
+              Demo mode — your code is <strong>{demoCode}</strong>
+            </div>
+          )}
           <input
             type="text"
             value={code}

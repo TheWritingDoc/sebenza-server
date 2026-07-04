@@ -81,8 +81,12 @@ router.post(['/send', '/send-code'], auth, smsSendLimiter, async (req, res) => {
 
     if (isDemo) {
       console.log('Demo mode - SMS code:', code);
+      // Demo mode returns the code (same pattern as email verification) so the
+      // flow is fully usable before Twilio credentials are configured.
       res.json({
-        message: 'Verification code sent (demo mode - check server console)'
+        message: 'Verification code sent (demo mode)',
+        demo: true,
+        code
       });
     } else {
       // Real Twilio integration would go here

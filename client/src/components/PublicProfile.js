@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
-import { TrustStars } from './TrustCenter';
+import { TrustStars, BehaviourBadges } from './TrustCenter';
 import { Briefcase, Wrench, ThumbsUp, CheckCircle2 } from './Icons';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
@@ -109,11 +109,31 @@ function PublicProfile() {
           </div>
         )}
 
-        {/* Trust stars */}
+        {/* Trust stars: identity (KYC) + community (job feedback) = /10 */}
         {trust && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 8 }}>
-            <TrustStars stars={trust.stars} size={18} />
-            <span style={{ fontSize: 12, fontWeight: 700, color: '#b45309' }}>{trust.level}</span>
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b' }}>Identity</span>
+              <TrustStars stars={trust.stars} size={16} max={5} />
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#b45309' }}>{trust.level}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 3, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b' }}>Community</span>
+              {trust.community?.stars != null ? (
+                <>
+                  <TrustStars stars={trust.community.stars} size={16} max={5} />
+                  <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700 }}>{trust.community.reviews} review{trust.community.reviews === 1 ? '' : 's'}</span>
+                </>
+              ) : (
+                <span style={{ fontSize: 11, color: '#94a3b8' }}>No ratings yet</span>
+              )}
+              <BehaviourBadges flags={trust.community?.flags} />
+            </div>
+            {trust.totalStars != null && (
+              <div style={{ fontSize: 12, fontWeight: 800, color: '#4f46e5', marginTop: 4 }}>
+                Total trust: {trust.totalStars} / 10
+              </div>
+            )}
           </div>
         )}
 

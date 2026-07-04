@@ -52,7 +52,7 @@ function getDistanceKm(lat1, lng1, lat2, lng2) {
 const APPLICANT_SELECT = {
   id: true, name: true, avatar: true, rating: true, trustStars: true,
   trustLevel: true, verified: true, emailVerified: true, phoneVerified: true,
-  communityStats: true, primaryCategory: true, portfolioImages: true
+  communityStats: true, flags: true, primaryCategory: true, portfolioImages: true
 };
 const POSTER_SELECT = { id: true, name: true, avatar: true, rating: true };
 

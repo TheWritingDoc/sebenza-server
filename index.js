@@ -358,6 +358,121 @@ app.post('/api/login', authLimiter, [
   }
 });
 
+// ── Phone-first onboarding ──
+// Minimum requirement to join: a NAME and a VERIFIED CELL NUMBER. Everything
+// else (email, photo, ID…) can be added later from the Trust Centre — each
+// step earns identity stars at the user's own pace.
+const normalizePhone = (p) => String(p || '').replace(/[\s\-().]/g, '');
+const genSmsCode = () => Math.floor(100000 + Math.random() * 900000).toString();
+
+// Step 1: request a code. Creates the account on first use (name required).
+app.post('/api/phone/start', authLimiter, async (req, res) => {
+  try {
+    const phone = normalizePhone(req.body.phone);
+    const name = String(req.body.name || '').trim();
+    if (!/^\+?\d{9,15}$/.test(phone)) {
+      return res.status(400).json({ error: 'Enter a valid cell number' });
+    }
+
+    let user = await prisma.user.findFirst({ where: { phone } });
+    let newUser = false;
+    if (!user) {
+      if (name.length < 2) {
+        return res.status(400).json({ error: 'NEW_USER_NAME_REQUIRED', message: 'Tell us your name to create your account' });
+      }
+      // Placeholder login identity — the user can add a real email later
+      // (verifying it earns a star). Random password: phone+code is the login.
+      const placeholderEmail = `p${phone.replace(/\D/g, '')}@phone.sebenza.app`;
+      const existingEmail = await prisma.user.findUnique({ where: { email: placeholderEmail } });
+      if (existingEmail) {
+        user = existingEmail;
+      } else {
+        const randomPassword = await bcrypt.hash(require('crypto').randomBytes(24).toString('hex'), 10);
+        let referralCode = generateReferralCode(name);
+        while (await prisma.user.findUnique({ where: { referralCode } })) referralCode = generateReferralCode(name);
+        user = await prisma.user.create({
+          data: {
+            name: name.slice(0, 100),
+            email: placeholderEmail,
+            password: randomPassword,
+            phone,
+            skills: ['General work/Helper'],
+            primaryCategory: 'General work/Helper',
+            referralCode,
+            communityStats: {
+              reliabilityScore: 100, givenRatingsAvg: 0, receivedRatingsAvg: 0,
+              totalGivenReviews: 0, totalReceivedReviews: 0, complainerScore: 0,
+              completionRate: 100, cancellationRate: 0, disputeRate: 0,
+              jobsCompleted: 0, jobsRequested: 0, timeWasterFlags: 0,
+              providerLateFlags: 0, impatientFlags: 0
+            }
+          }
+        });
+        newUser = true;
+      }
+    }
+
+    const code = genSmsCode();
+    await prisma.smsVerification.deleteMany({ where: { userId: user.id, phone } });
+    await prisma.smsVerification.create({
+      data: { userId: user.id, phone, code, expiresAt: new Date(Date.now() + 10 * 60 * 1000) }
+    });
+
+    const isDemo = !process.env.TWILIO_SID;
+    if (isDemo) {
+      console.log(`Demo mode - phone login code for ${phone}:`, code);
+      return res.json({ message: 'Verification code sent (demo mode)', demo: true, code, newUser });
+    }
+    const twilio = require('twilio');
+    const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_TOKEN);
+    await client.messages.create({
+      body: 'Your Sebenza sign-in code is: ' + code,
+      from: process.env.TWILIO_PHONE,
+      to: phone
+    });
+    res.json({ message: 'Verification code sent', newUser });
+  } catch (err) {
+    console.error('Phone start error:', err);
+    res.status(500).json({ error: 'Could not send the code' });
+  }
+});
+
+// Step 2: verify the code → phone becomes verified (earns the phone star) and
+// the user is signed in.
+app.post('/api/phone/verify', authLimiter, async (req, res) => {
+  try {
+    const phone = normalizePhone(req.body.phone);
+    const safeCode = String(req.body.code || '').replace(/\D/g, '').slice(0, 6);
+    if (!phone || safeCode.length !== 6) {
+      return res.status(400).json({ error: 'Phone and 6-digit code required' });
+    }
+
+    const user = await prisma.user.findFirst({ where: { phone } });
+    if (!user) return res.status(400).json({ error: 'No account for that number — start again' });
+
+    const sms = await prisma.smsVerification.findFirst({
+      where: { userId: user.id, phone, code: safeCode, verified: false, expiresAt: { gt: new Date() } }
+    });
+    if (!sms) return res.status(400).json({ error: 'Invalid or expired code' });
+
+    await prisma.smsVerification.deleteMany({ where: { userId: user.id, phone } });
+    const fresh = await prisma.user.update({
+      where: { id: user.id },
+      data: { phoneVerified: true, lastLoginAt: new Date(), loginAttempts: 0 }
+    });
+    try {
+      const { refreshTrust } = require('./utils/trustScore');
+      await refreshTrust(prisma, user.id);
+    } catch (e) { console.error('Trust refresh (phone login) failed:', e.message); }
+
+    const token = jwt.sign({ userId: user.id }, effectiveJwtSecret, { expiresIn: '30d' });
+    res.json({ token, user: authUserPayload(fresh) });
+  } catch (err) {
+    console.error('Phone verify error:', err);
+    res.status(500).json({ error: 'Verification failed' });
+  }
+});
+
 // Get Profile
 app.get('/api/profile', auth, async (req, res) => {
   try {

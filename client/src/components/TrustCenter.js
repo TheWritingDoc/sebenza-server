@@ -9,8 +9,9 @@ import {
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
-// Identity trust ladder tops out at TEN stars.
-export function TrustStars({ stars, size = 14, max = 10 }) {
+// The 10-star ladder is split: 5 IDENTITY stars (KYC, this screen) plus
+// 5 COMMUNITY stars (job feedback). Default renderer shows a 5-star row.
+export function TrustStars({ stars, size = 14, max = 5 }) {
   return (
     <span style={{ display: 'inline-flex', gap: 1, verticalAlign: 'middle' }} aria-label={`${stars} out of ${max} trust stars`}>
       {Array.from({ length: max }, (_, idx) => idx + 1).map(i => {
@@ -27,6 +28,43 @@ export function TrustStars({ stars, size = 14, max = 10 }) {
           </span>
         );
       })}
+    </span>
+  );
+}
+
+// Client-side mirror of utils/trustScore.js computeCommunityStars — used on
+// applicant cards where we already have communityStats but no trust endpoint.
+export function communityStarsFromStats(stats = {}, flagsList = []) {
+  const reviews = stats.totalReceivedReviews || 0;
+  const unresolved = Array.isArray(flagsList) ? flagsList.filter(f => f && !f.resolved) : [];
+  const flags = {
+    frequentComplainer: (stats.complainerScore || 0) >= 60,
+    lowReliability: (stats.reliabilityScore ?? 100) < 50,
+    flagged: unresolved.some(f => ['suspicious_activity', 'multiple_disputes'].includes(f.type)),
+  };
+  if (reviews === 0) return { stars: null, reviews: 0, flags };
+  let s = Number(stats.receivedRatingsAvg) || 0;
+  s -= ((stats.complainerScore || 0) / 100) * 1.5;
+  s -= ((100 - (stats.reliabilityScore ?? 100)) / 100) * 1.0;
+  s -= Math.min((stats.timeWasterFlags || 0) * 0.25, 1);
+  s -= Math.min(((stats.disputeRate || 0) / 100) * 1.0, 1);
+  if (flags.flagged) s -= 1;
+  return { stars: Math.min(5, Math.max(0.5, Math.round(s * 2) / 2)), reviews, flags };
+}
+
+// Compact behaviour warnings shown next to community stars (negotiation,
+// profiles). Chronic complainers / unreliable / flagged accounts are visible
+// BEFORE anyone agrees to work — that's the community-building point.
+export function BehaviourBadges({ flags, size = 10 }) {
+  if (!flags) return null;
+  const badge = (bg, color, text) => (
+    <span style={{ background: bg, color, borderRadius: 999, padding: '2px 8px', fontSize: size, fontWeight: 800, whiteSpace: 'nowrap' }}>{text}</span>
+  );
+  return (
+    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap', verticalAlign: 'middle' }}>
+      {flags.flagged && badge('#fee2e2', '#991b1b', 'FLAGGED')}
+      {flags.frequentComplainer && badge('#fef3c7', '#92400e', 'Complains often')}
+      {flags.lowReliability && badge('#fef3c7', '#92400e', 'Low reliability')}
     </span>
   );
 }
@@ -488,8 +526,14 @@ function TrustCenter({ user, setUser }) {
         <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Trust Centre</h2>
         <p className="text-gray-500 text-sm mt-1 mb-4">The more you verify, the more jobs you win</p>
 
-        <div className="mb-1"><TrustStars stars={trust.stars} size={22} /></div>
-        <div className="text-xs text-gray-400 font-semibold mb-1">{trust.stars} / 10 stars</div>
+        <div className="mb-1"><TrustStars stars={trust.stars} size={24} max={5} /></div>
+        <div className="text-xs text-gray-400 font-semibold mb-2">Identity: {trust.stars} / 5 stars</div>
+        <div className="text-xs text-gray-500 mb-1">
+          Community: {trust.community?.stars != null
+            ? <strong>{trust.community.stars} / 5</strong>
+            : <span>no ratings yet</span>}
+          {' '}· Total <strong>{trust.totalStars} / 10</strong>
+        </div>
         <div className="text-sm font-bold text-amber-600 mb-3">{trust.level}</div>
 
         <div className="h-3 bg-gray-100 rounded-full overflow-hidden max-w-xs mx-auto">

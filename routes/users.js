@@ -5,7 +5,7 @@ const { prisma } = require('../db');
 const { toDTO, sanitizeUser, isId } = require('../utils/dto');
 const upload = require('../middleware/upload');
 const { uploadFile } = require('../middleware/upload');
-const { computeTrust, refreshTrust } = require('../utils/trustScore');
+const { computeTrust, computeCommunityStars, totalStars, refreshTrust } = require('../utils/trustScore');
 const { sendVerificationEmail } = require('../utils/email');
 
 const genCode = () => Math.floor(100000 + Math.random() * 900000).toString();
@@ -172,8 +172,11 @@ router.get('/me/trust', auth, async (req, res) => {
     });
     if (!user) return res.status(404).json({ error: 'User not found' });
     const trust = computeTrust(user);
+    const community = computeCommunityStars(user.communityStats, user.flags);
     res.json({
-      ...trust,                       // score, stars, level, checklist
+      ...trust,                       // identity: score, stars (0.5–5), level, checklist
+      community,                      // stars (0–5 | null), reviews, flags
+      totalStars: totalStars(trust.stars, community),
       accountType: user.accountType || 'individual',
       businessName: user.businessName || '',
     });
@@ -206,10 +209,13 @@ router.get('/:id/trust', async (req, res) => {
         viewerEndorsed = !!existing;
       } catch (e) { /* anonymous */ }
     }
+    const community = computeCommunityStars(user.communityStats, user.flags);
     res.json({
       stars: trust.stars,
       level: trust.level,
       score: trust.score,
+      community,                      // visible during negotiation / profile views
+      totalStars: totalStars(trust.stars, community),
       verified: !!user.verified,
       emailVerified: !!user.emailVerified,
       phoneVerified: !!user.phoneVerified,

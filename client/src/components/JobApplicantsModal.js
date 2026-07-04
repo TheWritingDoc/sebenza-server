@@ -3,7 +3,7 @@ import axios from 'axios';
 import { getImageUrl, PLACEHOLDER_IMG, modalOverlayStyle, modalContentStyle, MAX_NEGOTIATION_ROUNDS } from '../shared/constants';
 import { scrollToRef, blurActiveInput, mobileFieldFocusScroll } from '../shared/workflowFocus';
 import { UserCircle, IdCard } from './Icons';
-import { TrustStars } from './TrustCenter';
+import { TrustStars, communityStarsFromStats, BehaviourBadges } from './TrustCenter';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -287,7 +287,8 @@ function JobApplicantsModal({ job, user, onClose, onUpdated, onViewPortfolio }) 
             </div>
             {/* Identity trust — how well this person has proven who they are */}
             <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
-              <TrustStars stars={trustStars} size={14} />
+              <span style={{ fontSize: 10, color: '#64748b', fontWeight: 700 }}>Identity</span>
+              <TrustStars stars={trustStars} size={14} max={5} />
               {isVerified && (
                 <span style={{ fontSize: 10, fontWeight: 800, background: '#dbeafe', color: '#1d4ed8', padding: '2px 8px', borderRadius: 999, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
                   <IdCard size={12} color="currentColor" /> ID Verified
@@ -297,6 +298,24 @@ function JobApplicantsModal({ job, user, onClose, onUpdated, onViewPortfolio }) 
                 <span style={{ fontSize: 10, color: '#94a3b8', fontWeight: 700 }}>{applicant.trustLevel}</span>
               )}
             </div>
+            {/* Community feedback — how neighbours rate working with them */}
+            {(() => {
+              const cs = communityStarsFromStats(applicant?.communityStats, applicant?.flags);
+              return (
+                <div style={{ display: 'flex', gap: 6, marginTop: 3, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 10, color: '#64748b', fontWeight: 700 }}>Community</span>
+                  {cs.stars != null ? (
+                    <>
+                      <TrustStars stars={cs.stars} size={14} max={5} />
+                      <span style={{ fontSize: 10, color: '#94a3b8', fontWeight: 700 }}>{cs.reviews} review{cs.reviews === 1 ? '' : 's'}</span>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: 10, color: '#94a3b8', fontWeight: 600 }}>No ratings yet</span>
+                  )}
+                  <BehaviourBadges flags={cs.flags} />
+                </div>
+              );
+            })()}
             <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap', alignItems: 'center' }}>
               {isHigherThanBudget && (
                 <span style={{ fontSize: 12, fontWeight: 800, background: '#fee2e2', color: '#991b1b', padding: '4px 10px', borderRadius: 999, border: '1px solid #fecaca' }}>

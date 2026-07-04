@@ -82,12 +82,13 @@ function computeTrust(user) {
   });
 
   // Normalise earned points to a 0–100 score against the total available,
-  // then map to 0–10 stars (nearest half star, 0.5 floor). Account is always
-  // done, so every member signs in with a visible star.
+  // then map to 0–5 IDENTITY stars (nearest half star, 0.5 floor).
+  // The other 5 stars of the 10-star ladder come from community feedback —
+  // see computeCommunityStars below. Identity 5 + Community 5 = 10 total.
   const score = Math.round((earned / TOTAL_POINTS) * 100);
-  const stars = Math.max(0.5, Math.round((earned / TOTAL_POINTS) * 10 * 2) / 2);
+  const stars = Math.max(0.5, Math.round((earned / TOTAL_POINTS) * 5 * 2) / 2);
 
-  return { score, stars, level: levelForScore(score), checklist, maxStars: 10 };
+  return { score, stars, level: levelForScore(score), checklist, maxStars: 5 };
 }
 
 /**
@@ -114,4 +115,36 @@ async function refreshTrust(prisma, userId) {
   return trust;
 }
 
-module.exports = { computeTrust, refreshTrust, TRUST_ITEMS, levelForScore };
+/**
+ * Community stars (0.5–5) — the OTHER half of the 10-star ladder. Built from
+ * job feedback so neighbours can see who they're dealing with BEFORE agreeing
+ * to work: chronic complainers, unreliable posters, and flagged accounts lose
+ * stars; consistent good ratings earn them. Null until the first review.
+ */
+function computeCommunityStars(stats = {}, flagsList = []) {
+  const reviews = stats.totalReceivedReviews || 0;
+  const unresolved = Array.isArray(flagsList) ? flagsList.filter(f => f && !f.resolved) : [];
+  const flags = {
+    frequentComplainer: (stats.complainerScore || 0) >= 60,
+    lowReliability: (stats.reliabilityScore ?? 100) < 50,
+    flagged: unresolved.some(f => ['suspicious_activity', 'multiple_disputes'].includes(f.type)),
+  };
+  if (reviews === 0) {
+    return { stars: null, reviews: 0, flags };
+  }
+  let s = Number(stats.receivedRatingsAvg) || 0;                    // 0–5 base from ratings
+  s -= ((stats.complainerScore || 0) / 100) * 1.5;                  // complains about everything
+  s -= ((100 - (stats.reliabilityScore ?? 100)) / 100) * 1.0;       // unreliable
+  s -= Math.min((stats.timeWasterFlags || 0) * 0.25, 1);            // wastes people's time
+  s -= Math.min(((stats.disputeRate || 0) / 100) * 1.0, 1);         // disputes
+  if (flags.flagged) s -= 1;                                        // active scam/dispute flag
+  const stars = Math.min(5, Math.max(0.5, Math.round(s * 2) / 2));
+  return { stars, reviews, flags };
+}
+
+/** Identity (0.5–5) + community (0–5) = the full 10-star picture. */
+function totalStars(identityStars, community) {
+  return Math.round((Number(identityStars || 0) + Number(community?.stars || 0)) * 2) / 2;
+}
+
+module.exports = { computeTrust, computeCommunityStars, totalStars, refreshTrust, TRUST_ITEMS, levelForScore };
