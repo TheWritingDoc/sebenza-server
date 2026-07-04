@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
-const { whitelistSelf } = require('../lib/atlas-whitelist');
+const { prisma } = require('../db');
+const { toDTO, sanitizeUser, isId } = require('../utils/dto');
 
 // Reusable JWT auth middleware
 const auth = (req, res, next) => {
@@ -28,7 +28,10 @@ const auth = (req, res, next) => {
 
 const requireAdmin = async (req, res, next) => {
   try {
-    const user = await User.findById(req.userId).select('role');
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      select: { id: true, role: true }
+    });
     if (!user || user.role !== 'admin') {
       return res.status(403).json({ error: 'Admin access required' });
     }
@@ -38,17 +41,14 @@ const requireAdmin = async (req, res, next) => {
   }
 };
 
-// Whitelist the server's current public IP in MongoDB Atlas
-router.post('/atlas/whitelist-self', auth, requireAdmin, async (req, res) => {
+// Simple admin health probe (the old Atlas whitelist route is gone — the
+// database is Supabase Postgres now and has no IP allow-list to manage).
+router.get('/status', auth, requireAdmin, async (req, res) => {
   try {
-    const result = await whitelistSelf();
-    res.json({
-      message: result.alreadyWhitelisted ? 'IP already whitelisted' : 'IP whitelisted successfully',
-      ...result
-    });
+    const users = await prisma.user.count();
+    res.json({ status: 'ok', users });
   } catch (err) {
-    console.error('Atlas whitelist error:', err.message);
-    res.status(500).json({ error: 'Failed to whitelist IP', ...(process.env.NODE_ENV !== 'production' ? { details: err.message } : {}) });
+    res.status(500).json({ error: 'Server error' });
   }
 });
 

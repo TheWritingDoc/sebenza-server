@@ -89,15 +89,22 @@ function computeTrust(user) {
  * Persist the computed identity stars/score onto the user so lists and cards
  * can show them without recomputing. Call after any identity-changing event
  * (doc upload, phone/ID verification, profile photo, first job completion).
+ * Takes the Prisma client (so route code and tests can inject their own).
  */
-async function refreshTrust(User, userId) {
-  const user = await User.findById(userId).lean();
+async function refreshTrust(prisma, userId) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { trustDocs: true, workExperience: true },
+  });
   if (!user) return null;
-  const trust = computeTrust(user);
-  await User.findByIdAndUpdate(userId, {
-    trustStars: trust.stars,
-    trustScore: trust.score,
-    trustLevel: trust.level,
+  const trust = computeTrust(user); // Prisma row already carries the fields computeTrust reads
+  await prisma.user.update({
+    where: { id: userId },
+    data: {
+      trustStars: trust.stars,
+      trustScore: trust.score,
+      trustLevel: trust.level,
+    },
   });
   return trust;
 }

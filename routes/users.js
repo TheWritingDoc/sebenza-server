@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
-const User = require('../models/User');
-const Service = require('../models/Service');
 const jwt = require('jsonwebtoken');
+const { prisma } = require('../db');
+const { toDTO, sanitizeUser, isId } = require('../utils/dto');
 const upload = require('../middleware/upload');
 const { uploadFile } = require('../middleware/upload');
 const { computeTrust, refreshTrust } = require('../utils/trustScore');
@@ -49,11 +49,21 @@ const auth = (req, res, next) => {
 router.get('/public', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit) || 6, 50);
-    const users = await User.find({ email: { $not: /test@/i } })
-      .select('name avatar primaryCategory rating communityStats createdAt')
-      .sort({ createdAt: -1 })
-      .limit(limit);
-    res.json(users);
+    const users = await prisma.user.findMany({
+      where: { NOT: { email: { contains: 'test@', mode: 'insensitive' } } },
+      select: {
+        id: true,
+        name: true,
+        avatar: true,
+        primaryCategory: true,
+        rating: true,
+        communityStats: true,
+        createdAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: limit,
+    });
+    res.json(toDTO(users));
   } catch (error) {
     console.error('Error:', error);
     res.status(500).json({ error: 'Failed to fetch users' });
@@ -71,14 +81,25 @@ router.get('/nearby', optionalAuth, async (req, res) => {
     const lngNum = parseFloat(lng);
     const radiusNum = parseFloat(radius);
 
-    const users = await User.find({
-      'location.coordinates': { $ne: [0, 0] }
-    }).select('name avatar primaryCategory rating communityStats location.coordinates createdAt');
+    const users = await prisma.user.findMany({
+      where: { OR: [{ lat: { not: 0 } }, { lng: { not: 0 } }] },
+      select: {
+        id: true,
+        name: true,
+        avatar: true,
+        primaryCategory: true,
+        rating: true,
+        communityStats: true,
+        lat: true,
+        lng: true,
+        createdAt: true,
+      },
+    });
 
     const R = 6371;
     const nearbyUsers = users.map(user => {
-      const userLat = user.location?.coordinates?.[1];
-      const userLng = user.location?.coordinates?.[0];
+      const userLat = user.lat;
+      const userLng = user.lng;
       if (!userLat || !userLng) return null;
 
       const dLat = (userLat - latNum) * Math.PI / 180;
@@ -87,20 +108,23 @@ router.get('/nearby', optionalAuth, async (req, res) => {
       const distance = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 
       if (distance > radiusNum) return null;
-      const obj = user.toObject();
-      // Coarsen public location to ~1km for privacy
-      if (obj.location?.coordinates) {
-        obj.location.coordinates = [
-          Math.round(userLng * 100) / 100,
-          Math.round(userLat * 100) / 100
-        ];
-      }
-      obj.distance = Math.round(distance*10)/10;
+      const { lat: _lat, lng: _lng, ...rest } = user;
+      const obj = {
+        ...rest,
+        // Coarsen public location to ~1km for privacy
+        location: {
+          coordinates: [
+            Math.round(userLng * 100) / 100,
+            Math.round(userLat * 100) / 100,
+          ],
+        },
+        distance: Math.round(distance*10)/10,
+      };
       return obj;
     }).filter(Boolean);
 
     nearbyUsers.sort((a,b) => a.distance - b.distance);
-    res.json(nearbyUsers.slice(0, 50));
+    res.json(toDTO(nearbyUsers.slice(0, 50)));
   } catch (error) {
     res.status(500).json({ error: 'Failed to fetch nearby users' });
   }
@@ -109,7 +133,10 @@ router.get('/nearby', optionalAuth, async (req, res) => {
 // Get current user's referral info
 router.get('/me/referral', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.userId).select('referralCode referralCount');
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { referralCode: true, referralCount: true },
+    });
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({ referralCode: user.referralCode, referralCount: user.referralCount });
   } catch (err) {
@@ -120,7 +147,10 @@ router.get('/me/referral', auth, async (req, res) => {
 // Get public referrer info by referral code (for invite page)
 router.get('/referrer/:code', async (req, res) => {
   try {
-    const user = await User.findOne({ referralCode: req.params.code.toUpperCase() }).select('name avatar');
+    const user = await prisma.user.findUnique({
+      where: { referralCode: req.params.code.toUpperCase() },
+      select: { name: true, avatar: true },
+    });
     if (!user) return res.status(404).json({ error: 'Referrer not found' });
     res.json({ name: user.name, avatar: user.avatar });
   } catch (err) {
@@ -136,9 +166,10 @@ router.get('/referrer/:code', async (req, res) => {
 // My own trust profile + checklist (drives the Trust Centre screen)
 router.get('/me/trust', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.userId)
-      .select('trustDocs workExperience profileImage avatar verified emailVerified phoneVerified communityStats accountType businessName')
-      .lean();
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      include: { trustDocs: true, workExperience: true },
+    });
     if (!user) return res.status(404).json({ error: 'User not found' });
     const trust = computeTrust(user);
     res.json({
@@ -155,18 +186,24 @@ router.get('/me/trust', auth, async (req, res) => {
 // Public trust view for another user's profile (no sensitive data)
 router.get('/:id/trust', async (req, res) => {
   try {
-    const user = await User.findById(req.params.id)
-      .select('trustDocs workExperience profileImage avatar verified emailVerified phoneVerified communityStats accountType businessName name endorsedBy')
-      .lean();
+    if (!isId(req.params.id)) return res.status(404).json({ error: 'User not found' });
+    const user = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      include: { trustDocs: true, workExperience: true },
+    });
     if (!user) return res.status(404).json({ error: 'User not found' });
     const trust = computeTrust(user);
+    const recommendations = await prisma.endorsement.count({ where: { userId: user.id } });
     // If the caller is authenticated, tell them whether they've endorsed already.
     let viewerEndorsed = false;
     const token = req.headers.authorization?.split(' ')[1];
     if (token) {
       try {
         const viewerId = jwt.verify(token, process.env.JWT_SECRET).userId;
-        viewerEndorsed = (user.endorsedBy || []).some(e => String(e.userId) === String(viewerId));
+        const existing = await prisma.endorsement.findUnique({
+          where: { userId_endorserId: { userId: user.id, endorserId: viewerId } },
+        });
+        viewerEndorsed = !!existing;
       } catch (e) { /* anonymous */ }
     }
     res.json({
@@ -176,7 +213,7 @@ router.get('/:id/trust', async (req, res) => {
       verified: !!user.verified,
       emailVerified: !!user.emailVerified,
       phoneVerified: !!user.phoneVerified,
-      recommendations: (user.endorsedBy || []).length,
+      recommendations,
       viewerEndorsed,
       accountType: user.accountType || 'individual',
       businessName: user.businessName || '',
@@ -200,18 +237,17 @@ router.post('/trust-docs', auth, upload.single('trustDoc'), async (req, res) => 
     if (!req.file) return res.status(400).json({ error: 'A document photo is required' });
 
     const fileUrl = await uploadFile(req.file, `trust/${docType}`);
-    await User.findByIdAndUpdate(req.user.userId, {
-      $push: {
-        trustDocs: {
-          docType,
-          title: (title || '').toString().slice(0, 120),
-          fileUrl,
-          status: 'pending',
-          uploadedAt: new Date(),
-        },
+    await prisma.trustDoc.create({
+      data: {
+        userId: req.user.userId,
+        docType,
+        title: (title || '').toString().slice(0, 120),
+        fileUrl,
+        status: 'pending',
+        uploadedAt: new Date(),
       },
     });
-    const trust = await refreshTrust(User, req.user.userId);
+    const trust = await refreshTrust(prisma, req.user.userId);
     res.json({ message: 'Document uploaded', stars: trust?.stars, level: trust?.level, score: trust?.score });
   } catch (err) {
     console.error('Trust doc upload error:', err);
@@ -224,21 +260,31 @@ router.post('/trust-docs', auth, upload.single('trustDoc'), async (req, res) => 
 // rating. Nothing here is self-uploaded — it's the app-verified track record.
 router.get('/:id/verified-work', async (req, res) => {
   try {
-    if (!/^[a-f0-9]{24}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid user id' });
-    const Job = require('../models/Job');
-    const jobs = await Job.find({
-      status: 'completed',
-      'applications.applicantId': req.params.id,
-    })
-      .select('title category completedAt posterReview.overallRating workProofPhotos completionRequest applications.applicantId applications.status acceptedApplicationId applications._id')
-      .sort({ completedAt: -1 })
-      .limit(30)
-      .lean();
+    if (!isId(req.params.id)) return res.status(400).json({ error: 'Invalid user id' });
+    const jobs = await prisma.job.findMany({
+      where: {
+        status: 'completed',
+        applications: { some: { applicantId: req.params.id } },
+      },
+      select: {
+        id: true,
+        title: true,
+        category: true,
+        completedAt: true,
+        posterReview: true,
+        workProofPhotos: true,
+        completionRequest: true,
+        acceptedApplicationId: true,
+        applications: { select: { id: true, applicantId: true } },
+      },
+      orderBy: { completedAt: 'desc' },
+      take: 30,
+    });
 
     const work = [];
     for (const j of jobs) {
       // Only count the job if THIS user was the accepted worker on it.
-      const accepted = (j.applications || []).find(a => String(a._id) === String(j.acceptedApplicationId));
+      const accepted = (j.applications || []).find(a => String(a.id) === String(j.acceptedApplicationId));
       if (!accepted || String(accepted.applicantId) !== String(req.params.id)) continue;
 
       const photos = [
@@ -251,7 +297,7 @@ router.get('/:id/verified-work', async (req, res) => {
       ].slice(0, 6);
 
       work.push({
-        jobId: j._id,
+        jobId: j.id,
         title: j.title,
         category: j.category,
         completedAt: j.completedAt,
@@ -260,7 +306,7 @@ router.get('/:id/verified-work', async (req, res) => {
       });
       if (work.length >= 12) break;
     }
-    res.json({ work, count: work.length });
+    res.json(toDTO({ work, count: work.length }));
   } catch (err) {
     console.error('Verified work error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -272,17 +318,16 @@ router.post('/work-experience', auth, async (req, res) => {
   try {
     const { title, place, years } = req.body;
     if (!title || !title.trim()) return res.status(400).json({ error: 'Please describe the work you did' });
-    await User.findByIdAndUpdate(req.user.userId, {
-      $push: {
-        workExperience: {
-          title: title.toString().slice(0, 160),
-          place: (place || '').toString().slice(0, 120),
-          years: (years || '').toString().slice(0, 40),
-          addedAt: new Date(),
-        },
+    await prisma.workExperience.create({
+      data: {
+        userId: req.user.userId,
+        title: title.toString().slice(0, 160),
+        place: (place || '').toString().slice(0, 120),
+        years: (years || '').toString().slice(0, 40),
+        addedAt: new Date(),
       },
     });
-    const trust = await refreshTrust(User, req.user.userId);
+    const trust = await refreshTrust(prisma, req.user.userId);
     res.json({ message: 'Experience added', stars: trust?.stars, level: trust?.level, score: trust?.score });
   } catch (err) {
     console.error('Work experience error:', err);
@@ -299,14 +344,20 @@ router.post('/work-experience', auth, async (req, res) => {
 // Send / resend an email verification code to the signed-in user's address
 router.post('/send-email-code', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.userId).select('email emailVerified');
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { email: true, emailVerified: true },
+    });
     if (!user) return res.status(404).json({ error: 'User not found' });
     if (user.emailVerified) return res.json({ message: 'Email already verified', alreadyVerified: true });
 
     const code = genCode();
-    await User.findByIdAndUpdate(req.user.userId, {
-      emailVerificationToken: code,
-      emailVerificationExpires: new Date(Date.now() + 15 * 60 * 1000),
+    await prisma.user.update({
+      where: { id: req.user.userId },
+      data: {
+        emailVerificationToken: code,
+        emailVerificationExpires: new Date(Date.now() + 15 * 60 * 1000),
+      },
     });
     const result = await sendVerificationEmail(user.email, code);
     res.json({
@@ -327,7 +378,10 @@ router.post('/verify-email-code', auth, async (req, res) => {
     const safe = String(code || '').replace(/\D/g, '').slice(0, 6);
     if (safe.length !== 6) return res.status(400).json({ error: 'Invalid code format' });
 
-    const user = await User.findById(req.user.userId).select('emailVerificationToken emailVerificationExpires emailVerified');
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { emailVerificationToken: true, emailVerificationExpires: true, emailVerified: true },
+    });
     if (!user) return res.status(404).json({ error: 'User not found' });
     if (user.emailVerified) return res.json({ message: 'Email already verified' });
     if (!user.emailVerificationToken || user.emailVerificationToken !== safe) {
@@ -337,12 +391,15 @@ router.post('/verify-email-code', auth, async (req, res) => {
       return res.status(400).json({ error: 'Code expired — request a new one' });
     }
 
-    await User.findByIdAndUpdate(req.user.userId, {
-      emailVerified: true,
-      emailVerificationToken: null,
-      emailVerificationExpires: null,
+    await prisma.user.update({
+      where: { id: req.user.userId },
+      data: {
+        emailVerified: true,
+        emailVerificationToken: null,
+        emailVerificationExpires: null,
+      },
     });
-    const trust = await refreshTrust(User, req.user.userId);
+    const trust = await refreshTrust(prisma, req.user.userId);
     res.json({ message: 'Email verified', stars: trust?.stars, level: trust?.level, score: trust?.score });
   } catch (err) {
     console.error('Verify email code error:', err);
@@ -355,26 +412,39 @@ router.post('/verify-email-code', auth, async (req, res) => {
 // (unlike jobs, which are temporary). Public — powers the map's business layer.
 router.get('/businesses', async (req, res) => {
   try {
-    const businesses = await User.find({
-      accountType: { $in: ['business', 'team'] },
-      'location.lat': { $exists: true, $ne: null, $ne: 0 },
-      'location.lng': { $exists: true, $ne: null, $ne: 0 },
-    })
-      .select('name businessName accountType primaryCategory location trustStars trustLevel verified profileImage')
-      .limit(500)
-      .lean();
+    const teams = await prisma.team.findMany({
+      where: {
+        lat: { not: 0 },
+        lng: { not: 0 },
+      },
+      include: {
+        supervisor: {
+          select: {
+            id: true,
+            primaryCategory: true,
+            trustStars: true,
+            trustLevel: true,
+            verified: true,
+            profileImage: true,
+          },
+        },
+      },
+      take: 500,
+    });
 
-    res.json(businesses.map(b => ({
-      id: b._id,
-      name: b.businessName || b.name,
-      accountType: b.accountType,
-      category: b.primaryCategory || '',
-      lat: b.location.lat,
-      lng: b.location.lng,
-      trustStars: b.trustStars || 0,
-      trustLevel: b.trustLevel || '',
-      verified: !!b.verified,
-    })));
+    res.json(toDTO(teams
+      .filter(t => t.lat != null && t.lng != null && t.lat !== 0 && t.lng !== 0)
+      .map(t => ({
+        id: t.id,
+        name: t.name,
+        accountType: t.type,
+        category: t.supervisor?.primaryCategory || '',
+        lat: t.lat,
+        lng: t.lng,
+        trustStars: Number(t.supervisor?.trustStars) || 0,
+        trustLevel: t.supervisor?.trustLevel || '',
+        verified: !!t.supervisor?.verified,
+      }))));
   } catch (err) {
     console.error('Businesses map error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -389,18 +459,23 @@ router.post('/:id/endorse', auth, async (req, res) => {
     if (String(targetId) === String(req.user.userId)) {
       return res.status(400).json({ error: 'You cannot recommend yourself' });
     }
-    const target = await User.findById(targetId).select('endorsedBy name');
+    if (!isId(targetId)) return res.status(404).json({ error: 'User not found' });
+    const target = await prisma.user.findUnique({ where: { id: targetId }, select: { id: true, name: true } });
     if (!target) return res.status(404).json({ error: 'User not found' });
 
-    const already = (target.endorsedBy || []).some(e => String(e.userId) === String(req.user.userId));
-    if (already) {
-      await User.findByIdAndUpdate(targetId, { $pull: { endorsedBy: { userId: req.user.userId } } });
-      const fresh = await User.findById(targetId).select('endorsedBy');
-      return res.json({ endorsed: false, count: fresh.endorsedBy.length });
+    const existing = await prisma.endorsement.findUnique({
+      where: { userId_endorserId: { userId: targetId, endorserId: req.user.userId } },
+    });
+    if (existing) {
+      await prisma.endorsement.delete({ where: { id: existing.id } });
+      const count = await prisma.endorsement.count({ where: { userId: targetId } });
+      return res.json({ endorsed: false, count });
     }
-    await User.findByIdAndUpdate(targetId, { $addToSet: { endorsedBy: { userId: req.user.userId, at: new Date() } } });
-    const fresh = await User.findById(targetId).select('endorsedBy');
-    res.json({ endorsed: true, count: fresh.endorsedBy.length });
+    await prisma.endorsement.create({
+      data: { userId: targetId, endorserId: req.user.userId, createdAt: new Date() },
+    });
+    const count = await prisma.endorsement.count({ where: { userId: targetId } });
+    res.json({ endorsed: true, count });
   } catch (err) {
     console.error('Endorse error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -415,20 +490,27 @@ router.post('/save-service', auth, async (req, res) => {
     const { serviceId, notes } = req.body;
     if (!serviceId) return res.status(400).json({ error: 'Service ID required' });
 
-    const user = await User.findById(req.user.userId);
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { savedServices: true },
+    });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
+    const savedServices = Array.isArray(user.savedServices) ? user.savedServices : [];
+
     // Check if already saved
-    const alreadySaved = user.savedServices?.some(s => s.serviceId?.toString() === serviceId);
+    const alreadySaved = savedServices.some(s => String(s.serviceId) === String(serviceId));
     if (alreadySaved) {
       return res.status(400).json({ error: 'Service already saved' });
     }
 
-    user.savedServices = user.savedServices || [];
-    user.savedServices.push({ serviceId, notes: notes || '', savedAt: new Date() });
-    await user.save();
+    savedServices.push({ serviceId, notes: notes || '', savedAt: new Date() });
+    await prisma.user.update({
+      where: { id: req.user.userId },
+      data: { savedServices },
+    });
 
-    res.json({ message: 'Service saved to your Business Cards', savedServices: user.savedServices });
+    res.json(toDTO({ message: 'Service saved to your Business Cards', savedServices }));
   } catch (err) {
     console.error('Save service error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -441,15 +523,21 @@ router.post('/unsave-service', auth, async (req, res) => {
     const { serviceId } = req.body;
     if (!serviceId) return res.status(400).json({ error: 'Service ID required' });
 
-    const user = await User.findById(req.user.userId);
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { savedServices: true },
+    });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    user.savedServices = (user.savedServices || []).filter(
-      s => s.serviceId?.toString() !== serviceId
+    const savedServices = (Array.isArray(user.savedServices) ? user.savedServices : []).filter(
+      s => String(s.serviceId) !== String(serviceId)
     );
-    await user.save();
+    await prisma.user.update({
+      where: { id: req.user.userId },
+      data: { savedServices },
+    });
 
-    res.json({ message: 'Service removed', savedServices: user.savedServices });
+    res.json(toDTO({ message: 'Service removed', savedServices }));
   } catch (err) {
     console.error('Unsave service error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -459,21 +547,31 @@ router.post('/unsave-service', auth, async (req, res) => {
 // Get user's saved services with full service data populated
 router.get('/saved-services', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.userId)
-      .populate({
-        path: 'savedServices.serviceId',
-        model: 'Service',
-        populate: { path: 'providerId', select: 'name avatar phone' }
-      });
-
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { savedServices: true },
+    });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const enriched = (user.savedServices || []).map(s => ({
-      ...s.toObject(),
-      service: s.serviceId
-    })).filter(s => s.service); // filter out deleted services
+    const saved = Array.isArray(user.savedServices) ? user.savedServices : [];
+    const serviceIds = [...new Set(saved.map(s => s.serviceId).filter(id => isId(String(id))))];
+    const services = serviceIds.length
+      ? await prisma.service.findMany({
+          where: { id: { in: serviceIds } },
+          include: { provider: { select: { id: true, name: true, avatar: true, phone: true } } },
+        })
+      : [];
+    const byId = new Map(services.map(({ provider, ...s }) => [s.id, { ...s, providerId: provider }]));
 
-    res.json(enriched);
+    const enriched = saved
+      .map(s => {
+        const service = byId.get(String(s.serviceId));
+        if (!service) return null; // filter out deleted services
+        return { ...s, serviceId: service, service };
+      })
+      .filter(Boolean);
+
+    res.json(toDTO(enriched));
   } catch (err) {
     console.error('Saved services error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -483,8 +581,12 @@ router.get('/saved-services', auth, async (req, res) => {
 // Check if user has saved a specific service
 router.get('/has-saved/:serviceId', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.userId).select('savedServices');
-    const hasSaved = user?.savedServices?.some(s => s.serviceId?.toString() === req.params.serviceId);
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { savedServices: true },
+    });
+    const hasSaved = (Array.isArray(user?.savedServices) ? user.savedServices : [])
+      .some(s => String(s.serviceId) === String(req.params.serviceId));
     res.json({ hasSaved: !!hasSaved });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -503,40 +605,56 @@ router.post('/recommend', auth, async (req, res) => {
     if (recipientId === req.user.userId) {
       return res.status(400).json({ error: 'Cannot recommend to yourself' });
     }
+    if (!isId(String(serviceId))) return res.status(404).json({ error: 'Service not found' });
+    if (!isId(String(recipientId))) return res.status(404).json({ error: 'Recipient not found' });
 
-    const service = await Service.findById(serviceId).populate('providerId', 'name');
+    const service = await prisma.service.findUnique({
+      where: { id: serviceId },
+      include: { provider: { select: { id: true, name: true } } },
+    });
     if (!service) return res.status(404).json({ error: 'Service not found' });
 
-    const sender = await User.findById(req.user.userId).select('name');
-    const recipient = await User.findById(recipientId);
+    const sender = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { name: true, recommendationsSent: true },
+    });
+    const recipient = await prisma.user.findUnique({
+      where: { id: recipientId },
+      select: { id: true, name: true, savedServices: true },
+    });
     if (!recipient) return res.status(404).json({ error: 'Recipient not found' });
 
     // Auto-save to recipient's business cards (they can remove if they want)
-    recipient.savedServices = recipient.savedServices || [];
-    const alreadySaved = recipient.savedServices.some(s => s.serviceId?.toString() === serviceId);
+    const recipientSaved = Array.isArray(recipient.savedServices) ? recipient.savedServices : [];
+    const alreadySaved = recipientSaved.some(s => String(s.serviceId) === String(serviceId));
     if (!alreadySaved) {
-      recipient.savedServices.push({
+      recipientSaved.push({
         serviceId,
         notes: `Recommended by ${sender.name}${message ? ': ' + message : ''}`,
-        savedAt: new Date()
+        savedAt: new Date(),
       });
-      await recipient.save();
+      await prisma.user.update({
+        where: { id: recipientId },
+        data: { savedServices: recipientSaved },
+      });
     }
 
     // Also store a recommendation record on sender for tracking
-    const senderUser = await User.findById(req.user.userId);
-    senderUser.recommendationsSent = senderUser.recommendationsSent || [];
-    senderUser.recommendationsSent.push({
+    const recommendationsSent = Array.isArray(sender.recommendationsSent) ? sender.recommendationsSent : [];
+    recommendationsSent.push({
       serviceId,
       recipientId,
       message: message || '',
-      sentAt: new Date()
+      sentAt: new Date(),
     });
-    await senderUser.save();
+    await prisma.user.update({
+      where: { id: req.user.userId },
+      data: { recommendationsSent },
+    });
 
     res.json({
       message: `Service recommended to ${recipient.name}. It has been saved to their Business Cards.`,
-      service: { title: service.title, provider: service.providerId?.name }
+      service: { title: service.title, provider: service.provider?.name },
     });
   } catch (err) {
     console.error('Recommend error:', err);
@@ -547,33 +665,42 @@ router.post('/recommend', auth, async (req, res) => {
 // Get users the current user can recommend to (contacts / nearby / interacted with)
 router.get('/contacts', auth, async (req, res) => {
   try {
-    const Transaction = require('../models/Transaction');
     const userId = req.user.userId;
 
     // Find users they've had transactions with
-    const transactions = await Transaction.find({
-      $or: [{ requesterId: userId }, { providerId: userId }]
-    }).select('requesterId providerId');
+    const transactions = await prisma.transaction.findMany({
+      where: { OR: [{ requesterId: userId }, { providerId: userId }] },
+      select: { requesterId: true, providerId: true },
+    });
 
     const contactIds = new Set();
     transactions.forEach(t => {
-      if (t.requesterId?.toString() !== userId) contactIds.add(t.requesterId.toString());
-      if (t.providerId?.toString() !== userId) contactIds.add(t.providerId.toString());
+      if (t.requesterId && String(t.requesterId) !== String(userId)) contactIds.add(String(t.requesterId));
+      if (t.providerId && String(t.providerId) !== String(userId)) contactIds.add(String(t.providerId));
     });
 
+    const userSelect = { id: true, name: true, avatar: true, lat: true, lng: true, primaryCategory: true };
+    const withLocation = ({ lat, lng, ...u }) => ({ ...u, location: { lat, lng } });
+
     // Also include nearby users (exclude self and test accounts)
-    const user = await User.findById(userId).select('location');
-    const nearbyUsers = await User.find({
-      _id: { $ne: userId, $nin: Array.from(contactIds) },
-      email: { $not: /test@/i },
-      'location.lat': { $ne: 0 }
-    }).select('name avatar location primaryCategory').limit(20);
+    const nearbyUsers = await prisma.user.findMany({
+      where: {
+        id: { not: userId, notIn: Array.from(contactIds) },
+        NOT: { email: { contains: 'test@', mode: 'insensitive' } },
+        lat: { not: 0 },
+      },
+      select: userSelect,
+      take: 20,
+    });
 
-    const contacts = await User.find({
-      _id: { $in: Array.from(contactIds) }
-    }).select('name avatar location primaryCategory');
+    const contacts = contactIds.size
+      ? await prisma.user.findMany({
+          where: { id: { in: Array.from(contactIds) } },
+          select: userSelect,
+        })
+      : [];
 
-    res.json({ contacts, nearby: nearbyUsers });
+    res.json(toDTO({ contacts: contacts.map(withLocation), nearby: nearbyUsers.map(withLocation) }));
   } catch (err) {
     console.error('Contacts error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -585,12 +712,14 @@ router.get('/contacts', auth, async (req, res) => {
 // Accept T&C for creating professional services
 router.post('/accept-professional-tc', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.userId);
-    if (!user) return res.status(404).json({ error: 'User not found' });
-
-    user.professionalServiceTCAccepted = true;
-    user.professionalServiceTCAcceptedAt = new Date();
-    await user.save();
+    const updated = await prisma.user.updateMany({
+      where: { id: req.user.userId },
+      data: {
+        professionalServiceTCAccepted: true,
+        professionalServiceTCAcceptedAt: new Date(),
+      },
+    });
+    if (updated.count === 0) return res.status(404).json({ error: 'User not found' });
 
     res.json({ message: 'Terms accepted', professionalServiceTCAccepted: true });
   } catch (err) {
@@ -602,11 +731,14 @@ router.post('/accept-professional-tc', auth, async (req, res) => {
 // Check T&C status
 router.get('/professional-tc-status', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.user.userId).select('professionalServiceTCAccepted professionalServiceTCAcceptedAt');
+    const user = await prisma.user.findUnique({
+      where: { id: req.user.userId },
+      select: { professionalServiceTCAccepted: true, professionalServiceTCAcceptedAt: true },
+    });
     if (!user) return res.status(404).json({ error: 'User not found' });
     res.json({
       accepted: user.professionalServiceTCAccepted || false,
-      acceptedAt: user.professionalServiceTCAcceptedAt
+      acceptedAt: user.professionalServiceTCAcceptedAt,
     });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -616,15 +748,15 @@ router.get('/professional-tc-status', auth, async (req, res) => {
 // GET /api/users/stats - Public stats for homepage
 router.get('/stats', async (req, res) => {
   try {
-    const userCount = await User.countDocuments();
-    const jobCount = await require('../models/Job').countDocuments();
-    const serviceCount = await require('../models/Service').countDocuments();
-    
+    const userCount = await prisma.user.count();
+    const jobCount = await prisma.job.count();
+    const serviceCount = await prisma.service.count();
+
     res.json({
       neighbors: userCount,
       tasksListed: jobCount,
       jobsDone: jobCount,
-      services: serviceCount
+      services: serviceCount,
     });
   } catch (err) {
     console.error('Stats error:', err);

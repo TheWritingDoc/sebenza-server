@@ -1,6 +1,7 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
-const Service = require('../models/Service');
+const { prisma } = require('../db');
+const { toDTO, sanitizeUser, isId } = require('../utils/dto');
 const upload = require('../middleware/upload');
 const { uploadFiles } = require('../middleware/upload');
 const jwt = require('jsonwebtoken');
@@ -14,6 +15,12 @@ function getDistanceKm(lat1, lng1, lat2, lng2) {
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
+
+// Mongo-era clients expect service.location = { lat, lng }
+const serviceOut = (s) => {
+  if (!s) return s;
+  return { ...s, location: { lat: s.lat, lng: s.lng } };
+};
 
 // Middleware to verify JWT
 const auth = (req, res, next) => {
@@ -42,28 +49,29 @@ router.get('/public', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 6;
     const category = req.query.category;
-    const filter = { available: true, mapVisibility: 'public' };
-    if (category) filter.category = category;
-    
-    const services = await Service.find(filter)
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean();
-    
+    const where = { available: true, mapVisibility: 'public' };
+    if (category) where.category = category;
+
+    const services = await prisma.service.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limit
+    });
+
     const publicServices = services.map(s => ({
-      id: s._id,
+      id: s.id,
       providerId: s.providerId,
       title: s.title,
       description: s.description,
       category: s.category,
       randAmount: s.randAmount,
-      location: s.location,
+      location: { lat: s.lat, lng: s.lng },
       images: s.images || [],
-      averageRating: s.averageRating || 5,
+      averageRating: Number(s.averageRating) || 5,
       completedJobsCount: s.completedJobsCount || 0
     }));
-    
-    res.json(publicServices);
+
+    res.json(toDTO(publicServices));
   } catch (err) {
     console.error('Public services error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -73,7 +81,7 @@ router.get('/public', async (req, res) => {
 // Get nearby services within radius
 router.get('/nearby', auth, async (req, res) => {
   try {
-        const token = req.headers.authorization?.split(' ')[1];
+    const token = req.headers.authorization?.split(' ')[1];
     let isAuthenticated = false;
     if (token) {
       try {
@@ -81,13 +89,13 @@ router.get('/nearby', auth, async (req, res) => {
         isAuthenticated = true;
       } catch (e) { /* invalid token */ }
     }
-    
+
     const { lat, lng, radius } = req.query;
     // FREE users: 1km max, Authenticated: 50km max
     const maxRadius = isAuthenticated ? 50 : 1;
     const requestedRadius = parseFloat(radius) || maxRadius;
     const radiusNum = Math.min(requestedRadius, maxRadius);
-    
+
     if (!lat || !lng) {
       return res.status(400).json({ error: 'Latitude and longitude required' });
     }
@@ -96,33 +104,25 @@ router.get('/nearby', auth, async (req, res) => {
     const lngNum = parseFloat(lng);
 
     // Find all services and calculate distance
-    const services = await Service.find({ available: true, mapVisibility: 'public' });
+    const services = await prisma.service.findMany({ where: { available: true, mapVisibility: 'public' } });
 
     // Calculate distance for each service and filter by radius
     const nearbyServices = services.map(service => {
-      const serviceLat = service.location?.lat;
-      const serviceLng = service.location?.lng;
-      
+      const serviceLat = service.lat;
+      const serviceLng = service.lng;
+
       if (!serviceLat || !serviceLng) return null;
 
-      // Haversine formula to calculate distance
-      const R = 6371; // Earth radius in km
-      const dLat = (serviceLat - latNum) * Math.PI / 180;
-      const dLng = (serviceLng - lngNum) * Math.PI / 180;
-      const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-                Math.cos(latNum * Math.PI / 180) * Math.cos(serviceLat * Math.PI / 180) *
-                Math.sin(dLng/2) * Math.sin(dLng/2);
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-      const distance = R * c;
+      const distance = getDistanceKm(latNum, lngNum, serviceLat, serviceLng);
 
       return {
-        ...service.toObject(),
+        ...serviceOut(service),
         distance
       };
     }).filter(s => s && s.distance <= radiusNum)
       .sort((a, b) => a.distance - b.distance);
 
-    res.json(nearbyServices);
+    res.json(toDTO(nearbyServices));
   } catch (err) {
     console.error('Nearby services error:', err);
     res.status(500).json({ error: 'Server error fetching nearby services' });
@@ -133,12 +133,12 @@ router.get('/nearby', auth, async (req, res) => {
 router.get('/', auth, async (req, res) => {
   try {
     const { category } = req.query;
-    const filter = { available: true, mapVisibility: 'public' };
+    const where = { available: true, mapVisibility: 'public' };
     if (category && category !== 'all') {
-      filter.category = category;
+      where.category = category;
     }
-    const services = await Service.find(filter).limit(50);
-    res.json(services);
+    const services = await prisma.service.findMany({ where, take: 50 });
+    res.json(toDTO(services.map(serviceOut)));
   } catch (err) {
     console.error('Get services error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -149,10 +149,9 @@ router.get('/', auth, async (req, res) => {
 router.post('/create', auth, upload.array('images', 10), async (req, res) => {
   try {
     const { title, description, category, randAmount, location, pricingType, scheduledDate, estimatedDuration, tags, profileViewFee, mapPinLocked, mapVisibility } = req.body;
-    
+
     // All services are free to post
-    const User = require('../models/User');
-    const user = await User.findById(req.userId);
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
 
     // Verify user has accepted professional service T&C
     if (!user.professionalServiceTCAccepted) {
@@ -177,7 +176,7 @@ router.post('/create', auth, upload.array('images', 10), async (req, res) => {
 
     // Handle uploaded images
     const serviceImageUrls = req.files && req.files.length > 0 ? await uploadFiles(req.files, 'services') : [];
-    const images = serviceImageUrls.map(url => ({
+    const serviceImages = serviceImageUrls.map(url => ({
       url,
       caption: '',
       uploadedAt: new Date()
@@ -186,71 +185,76 @@ router.post('/create', auth, upload.array('images', 10), async (req, res) => {
     const lockOnMap = mapPinLocked === undefined ? true : String(mapPinLocked) !== 'false';
     const requestedVisibility = mapVisibility === 'hidden' ? 'hidden' : 'public';
 
-    const service = new Service({
-      providerId: req.userId,
-      title,
-      description,
-      category,
-      randAmount: parseFloat(randAmount) || 0,
-      location: parsedLocation,
-      mapPinLocked: lockOnMap,
-      mapVisibility: lockOnMap ? 'public' : requestedVisibility,
-      pricingType: pricingType || 'fixed',
-      scheduledDate: scheduledDate ? new Date(scheduledDate) : undefined,
-      estimatedDuration: estimatedDuration || '',
-      tags: parsedTags || [],
-      images: serviceImages,
-      profileViewFee: Math.min(50, Math.max(0, parseFloat(profileViewFee) || 0)),
-      completedJobsCount: 0,
-      averageRating: 5
+    const service = await prisma.service.create({
+      data: {
+        providerId: req.userId,
+        title,
+        description,
+        category,
+        randAmount: parseFloat(randAmount) || 0,
+        lat: parseFloat(parsedLocation?.lat) || 0,
+        lng: parseFloat(parsedLocation?.lng) || 0,
+        mapPinLocked: lockOnMap,
+        mapVisibility: lockOnMap ? 'public' : requestedVisibility,
+        pricingType: pricingType || 'fixed',
+        scheduledDate: scheduledDate ? new Date(scheduledDate) : null,
+        estimatedDuration: estimatedDuration || '',
+        tags: parsedTags || [],
+        images: serviceImages,
+        profileViewFee: Math.min(50, Math.max(0, parseFloat(profileViewFee) || 0)),
+        completedJobsCount: 0,
+        averageRating: 5,
+        ratingBreakdown: { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 }
+      }
     });
-
-    await service.save();
 
     const io = req.app.get('io');
     const onlineUsers = req.app.get('onlineUsers');
 
     // Notify nearby online users about new service
-    const svcLat = service.location?.lat;
-    const svcLng = service.location?.lng;
+    const svcLat = service.lat;
+    const svcLng = service.lng;
     if (io && svcLat != null && svcLng != null) {
-      const onlineUserIds = Array.from(onlineUsers.keys());
-      const onlineUsersData = await User.find({ _id: { $in: onlineUserIds } }).select('location lat lng');
+      const onlineUserIds = Array.from(onlineUsers.keys()).filter(isId);
+      const onlineUsersData = await prisma.user.findMany({
+        where: { id: { in: onlineUserIds } },
+        select: { id: true, lat: true, lng: true }
+      });
       const NEARBY_KM = 20;
       for (const u of onlineUsersData) {
-        if (String(u._id) === String(req.userId)) continue;
-        const ulat = u.lat ?? u.location?.lat;
-        const ulng = u.lng ?? u.location?.lng;
+        if (String(u.id) === String(req.userId)) continue;
+        const ulat = u.lat;
+        const ulng = u.lng;
         if (ulat == null || ulng == null) continue;
         const dist = getDistanceKm(svcLat, svcLng, ulat, ulng);
         if (dist <= NEARBY_KM) {
-          const sid = onlineUsers.get(String(u._id));
+          const sid = onlineUsers.get(String(u.id));
           if (sid) {
             io.to(sid).emit('new_service_nearby', {
-              serviceId: String(service._id),
+              serviceId: String(service.id),
               title: service.title,
               lat: svcLat,
               lng: svcLng,
               distanceKm: Math.round(dist * 100) / 100,
-              randAmount: service.randAmount || 0
+              randAmount: Number(service.randAmount) || 0
             });
           }
-          sendNotification(io, onlineUsers, u._id, {
+          sendNotification(io, onlineUsers, u.id, {
             type: 'service_nearby',
             title: 'New Service Nearby!',
-            message: `"${service.title}" posted ${dist < 1 ? '<1' : Math.round(dist)}km away — R${service.randAmount || 0}`,
-            data: { serviceId: service._id }
+            message: `"${service.title}" posted ${dist < 1 ? '<1' : Math.round(dist)}km away — R${Number(service.randAmount) || 0}`,
+            data: { serviceId: service.id }
           });
         }
       }
     }
-    
-    res.json({ 
-      message: 'Service created successfully!', 
-      service,
+
+    res.json({
+      message: 'Service created successfully!',
+      service: toDTO(serviceOut(service)),
       imagesUploaded: serviceImages.length,
       charged: 0,
-      remainingBalance: user.randBalance
+      remainingBalance: Number(user.randBalance)
     });
   } catch (err) {
     console.error('Create service error:', err);
@@ -261,9 +265,11 @@ router.post('/create', auth, upload.array('images', 10), async (req, res) => {
 // Get provider's services
 router.get('/my-services', auth, async (req, res) => {
   try {
-    const services = await Service.find({ providerId: req.userId })
-      .sort({ createdAt: -1 });
-    res.json(services);
+    const services = await prisma.service.findMany({
+      where: { providerId: req.userId },
+      orderBy: { createdAt: 'desc' }
+    });
+    res.json(toDTO(services.map(serviceOut)));
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
   }
@@ -272,10 +278,12 @@ router.get('/my-services', auth, async (req, res) => {
 // Update map lock / visibility for provider service
 router.patch('/:serviceId/map-lock', auth, async (req, res) => {
   try {
-    const service = await Service.findOne({
-      _id: req.params.serviceId,
-      providerId: req.userId
-    });
+    const service = isId(req.params.serviceId) ? await prisma.service.findFirst({
+      where: {
+        id: req.params.serviceId,
+        providerId: req.userId
+      }
+    }) : null;
 
     if (!service) {
       return res.status(404).json({ error: 'Service not found' });
@@ -287,16 +295,19 @@ router.patch('/:serviceId/map-lock', auth, async (req, res) => {
 
     const requestedVisibility = req.body?.mapVisibility === 'hidden' ? 'hidden' : 'public';
 
-    service.mapPinLocked = lockOnMap;
-    service.mapVisibility = lockOnMap ? 'public' : requestedVisibility;
-
-    await service.save();
+    const updated = await prisma.service.update({
+      where: { id: service.id },
+      data: {
+        mapPinLocked: lockOnMap,
+        mapVisibility: lockOnMap ? 'public' : requestedVisibility
+      }
+    });
 
     res.json({
-      message: service.mapPinLocked
+      message: updated.mapPinLocked
         ? 'Service is now locked on the map.'
-        : `Service visibility set to ${service.mapVisibility}.`,
-      service
+        : `Service visibility set to ${updated.mapVisibility}.`,
+      service: toDTO(serviceOut(updated))
     });
   } catch (err) {
     console.error('Map lock update error:', err);
@@ -307,10 +318,12 @@ router.patch('/:serviceId/map-lock', auth, async (req, res) => {
 // Delete service
 router.delete('/:serviceId', auth, async (req, res) => {
   try {
-    const service = await Service.findOne({
-      _id: req.params.serviceId,
-      providerId: req.userId
-    });
+    const service = isId(req.params.serviceId) ? await prisma.service.findFirst({
+      where: {
+        id: req.params.serviceId,
+        providerId: req.userId
+      }
+    }) : null;
 
     if (!service) {
       return res.status(404).json({ error: 'Service not found' });
@@ -322,7 +335,7 @@ router.delete('/:serviceId', auth, async (req, res) => {
       });
     }
 
-    await service.deleteOne();
+    await prisma.service.delete({ where: { id: service.id } });
 
     res.json({ message: 'Service deleted' });
   } catch (err) {
@@ -334,54 +347,60 @@ router.delete('/:serviceId', auth, async (req, res) => {
 router.post('/pay-profile-view', auth, async (req, res) => {
   try {
     const { serviceId } = req.body;
-    const User = require('../models/User');
-    
-    const service = await Service.findById(serviceId);
+
+    const service = isId(serviceId)
+      ? await prisma.service.findUnique({ where: { id: serviceId } })
+      : null;
     if (!service) return res.status(404).json({ error: 'Service not found' });
-    
-    const fee = service.profileViewFee || 0;
+
+    const fee = Number(service.profileViewFee) || 0;
     if (fee <= 0) {
       return res.json({ paid: true, message: 'Profile view is free' });
     }
-    
-    const viewer = await User.findById(req.userId);
-    const provider = await User.findById(service.providerId);
-    
+
+    const viewer = await prisma.user.findUnique({ where: { id: req.userId } });
+    const provider = await prisma.user.findUnique({ where: { id: service.providerId } });
+
     if (!viewer || !provider) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
+
     // Check if already paid
-    const alreadyPaid = viewer.paidProfileViews?.some(p => p.serviceId === String(serviceId));
+    const paidProfileViews = Array.isArray(viewer.paidProfileViews) ? viewer.paidProfileViews : [];
+    const alreadyPaid = paidProfileViews.some(p => p.serviceId === String(serviceId));
     if (alreadyPaid) {
       return res.json({ paid: true, message: 'Already paid for this profile view' });
     }
-    
+
     // Check balance
-    if ((viewer.randBalance || 0) < fee) {
-      return res.status(400).json({ 
-        error: `Insufficient balance. You need R${fee} for verification. Your balance: R${viewer.randBalance || 0}`
+    if (Number(viewer.randBalance || 0) < fee) {
+      return res.status(400).json({
+        error: `Insufficient balance. You need R${fee} for verification. Your balance: R${Number(viewer.randBalance || 0)}`
       });
     }
-    
+
     // Process payment — fee goes to Sebenza platform, not the provider
-    viewer.randBalance = (viewer.randBalance || 0) - fee;
-    
-    viewer.paidProfileViews = viewer.paidProfileViews || [];
-    viewer.paidProfileViews.push({
-      serviceId: String(serviceId),
-      providerId: String(service.providerId),
-      amount: fee,
-      paidAt: new Date()
+    const updatedViewer = await prisma.user.update({
+      where: { id: req.userId },
+      data: {
+        randBalance: { decrement: fee },
+        paidProfileViews: [
+          ...paidProfileViews,
+          {
+            serviceId: String(serviceId),
+            providerId: String(service.providerId),
+            amount: fee,
+            paidAt: new Date()
+          }
+        ]
+      }
     });
-    
-    await viewer.save();
-    
-    res.json({ 
-      paid: true, 
+
+    res.json({
+      paid: true,
       message: `R${fee} verified successfully. You can now connect.`,
       fee,
-      remainingBalance: viewer.randBalance
+      remainingBalance: Number(updatedViewer.randBalance)
     });
   } catch (err) {
     console.error('Pay profile view error:', err);
@@ -390,9 +409,3 @@ router.post('/pay-profile-view', auth, async (req, res) => {
 });
 
 module.exports = router;
-
-
-
-
-
-

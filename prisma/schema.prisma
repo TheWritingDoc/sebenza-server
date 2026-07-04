@@ -1,0 +1,443 @@
+// Sebenza Prisma schema — mirrors the Supabase migration `sebenza_full_schema`.
+// Runtime connects through the Supabase pooler (DATABASE_URL, pgbouncer);
+// DIRECT_URL (5432) is used by prisma migrate/db pull only.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id                             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                           String
+  email                          String    @unique
+  password                       String
+  phone                          String    @default("")
+  role                           String    @default("client")
+  lat                            Float     @default(0)
+  lng                            Float     @default(0)
+  avatar                         String    @default("")
+  credits                        Decimal   @default(1000) @db.Decimal(12, 2)
+  randBalance                    Decimal   @default(1000) @map("rand_balance") @db.Decimal(12, 2)
+  escrowRand                     Decimal   @default(0) @map("escrow_rand") @db.Decimal(12, 2)
+  totalEarnedRand                Decimal   @default(0) @map("total_earned_rand") @db.Decimal(12, 2)
+  bankAccount                    Json      @default("{}") @map("bank_account")
+  rating                         Decimal   @default(0) @db.Decimal(4, 2)
+  verified                       Boolean   @default(false)
+  phoneVerified                  Boolean   @default(false) @map("phone_verified")
+  emailVerified                  Boolean   @default(false) @map("email_verified")
+  profileImage                   String    @default("") @map("profile_image")
+  isOnline                       Boolean   @default(true) @map("is_online")
+  lastActive                     DateTime  @default(now()) @map("last_active") @db.Timestamptz(6)
+  showOnlineStatus               Boolean   @default(true) @map("show_online_status")
+  primaryCategory                String    @default("") @map("primary_category")
+  freeServiceUsed                Boolean   @default(false) @map("free_service_used")
+  paidProfileViews               Json      @default("[]") @map("paid_profile_views")
+  portfolioImages                Json      @default("[]") @map("portfolio_images")
+  skills                         String[]  @default([])
+  communityStats                 Json      @map("community_stats")
+  flags                          Json      @default("[]")
+  savedServices                  Json      @default("[]") @map("saved_services")
+  recommendationsSent            Json      @default("[]") @map("recommendations_sent")
+  referralCode                   String?   @unique @map("referral_code")
+  referredById                   String?   @map("referred_by") @db.Uuid
+  referralCount                  Int       @default(0) @map("referral_count")
+  emailVerificationToken         String?   @map("email_verification_token")
+  emailVerificationExpires       DateTime? @map("email_verification_expires") @db.Timestamptz(6)
+  lastLoginAt                    DateTime? @map("last_login_at") @db.Timestamptz(6)
+  loginAttempts                  Int       @default(0) @map("login_attempts")
+  lockUntil                      DateTime? @map("lock_until") @db.Timestamptz(6)
+  professionalServiceTCAccepted  Boolean   @default(false) @map("professional_service_tc_accepted")
+  professionalServiceTCAcceptedAt DateTime? @map("professional_service_tc_accepted_at") @db.Timestamptz(6)
+  accountType                    String    @default("individual") @map("account_type")
+  businessName                   String    @default("") @map("business_name")
+  teamSize                       Int       @default(1) @map("team_size")
+  teamId                         String?   @map("team_id") @db.Uuid
+  teamRole                       String?   @map("team_role")
+  trustStars                     Decimal   @default(0.5) @map("trust_stars") @db.Decimal(3, 1)
+  trustScore                     Int       @default(10) @map("trust_score")
+  trustLevel                     String    @default("New Neighbour") @map("trust_level")
+  createdAt                      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  referredBy        User?            @relation("Referrals", fields: [referredById], references: [id])
+  referrals         User[]           @relation("Referrals")
+  team              Team?            @relation("TeamMembership", fields: [teamId], references: [id], onDelete: SetNull)
+  teamsSupervised   Team[]           @relation("TeamSupervisor")
+  teamMemberRows    TeamMember[]
+  trustDocs         TrustDoc[]
+  workExperience    WorkExperience[]
+  endorsementsReceived Endorsement[] @relation("Endorsee")
+  endorsementsGiven    Endorsement[] @relation("Endorser")
+  services          Service[]
+  jobsPosted        Job[]
+  applications      Application[]
+  transactionsRequested Transaction[] @relation("Requester")
+  transactionsProvided  Transaction[] @relation("Provider")
+  reviewsGiven      Review[]         @relation("Reviewer")
+  reviewsReceived   Review[]         @relation("Reviewee")
+  messagesSent      Message[]        @relation("Sender")
+  messagesReceived  Message[]        @relation("Receiver")
+  notifications     Notification[]
+  smsVerifications  SmsVerification[]
+  verifications     Verification[]
+
+  @@index([role, primaryCategory])
+  @@index([isOnline, lastActive(sort: Desc)])
+  @@map("users")
+}
+
+model TrustDoc {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  docType    String   @map("doc_type")
+  title      String   @default("")
+  fileUrl    String   @default("") @map("file_url")
+  status     String   @default("pending")
+  uploadedAt DateTime @default(now()) @map("uploaded_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("trust_docs")
+}
+
+model WorkExperience {
+  id      String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId  String   @map("user_id") @db.Uuid
+  title   String
+  place   String   @default("")
+  years   String   @default("")
+  addedAt DateTime @default(now()) @map("added_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("work_experience")
+}
+
+model Endorsement {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  endorserId String   @map("endorser_id") @db.Uuid
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user     User @relation("Endorsee", fields: [userId], references: [id], onDelete: Cascade)
+  endorser User @relation("Endorser", fields: [endorserId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, endorserId])
+  @@map("endorsements")
+}
+
+model Team {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  supervisorId String    @map("supervisor_id") @db.Uuid
+  name         String
+  type         String    @default("team")
+  description  String    @default("")
+  lat          Float?
+  lng          Float?
+  mapVisible   Boolean   @default(true) @map("map_visible")
+  qrCode       String    @default("") @map("qr_code")
+  qrExpiresAt  DateTime? @map("qr_expires_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  supervisor User         @relation("TeamSupervisor", fields: [supervisorId], references: [id])
+  members    TeamMember[]
+  usersIn    User[]       @relation("TeamMembership")
+
+  @@index([supervisorId])
+  @@map("teams")
+}
+
+model TeamMember {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  teamId        String    @map("team_id") @db.Uuid
+  userId        String?   @map("user_id") @db.Uuid
+  inviteEmail   String    @default("") @map("invite_email")
+  invitePhone   String    @default("") @map("invite_phone")
+  name          String    @default("")
+  role          String    @default("member")
+  status        String    @default("invited")
+  invitedAt     DateTime  @default(now()) @map("invited_at") @db.Timestamptz(6)
+  joinedAt      DateTime? @map("joined_at") @db.Timestamptz(6)
+  qrConfirmedAt DateTime? @map("qr_confirmed_at") @db.Timestamptz(6)
+  confirmedRole String    @default("") @map("confirmed_role")
+
+  team Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([teamId])
+  @@index([userId])
+  @@map("team_members")
+}
+
+model Service {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  providerId        String    @map("provider_id") @db.Uuid
+  title             String
+  description       String
+  category          String
+  randAmount        Decimal   @map("rand_amount") @db.Decimal(12, 2)
+  lat               Float
+  lng               Float
+  available         Boolean   @default(true)
+  mapPinLocked      Boolean   @default(true) @map("map_pin_locked")
+  mapVisibility     String    @default("public") @map("map_visibility")
+  pricingType       String    @default("fixed") @map("pricing_type")
+  scheduledDate     DateTime? @map("scheduled_date") @db.Timestamptz(6)
+  estimatedDuration String?   @map("estimated_duration")
+  tags              String[]  @default([])
+  images            Json      @default("[]")
+  profileViewFee    Decimal   @default(0) @map("profile_view_fee") @db.Decimal(12, 2)
+  completedJobsCount Int      @default(0) @map("completed_jobs_count")
+  averageRating     Decimal   @default(0) @map("average_rating") @db.Decimal(4, 2)
+  totalReviews      Int       @default(0) @map("total_reviews")
+  ratingBreakdown   Json      @map("rating_breakdown")
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  provider     User          @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  transactions Transaction[]
+  reviews      Review[]
+
+  @@index([providerId, available, createdAt(sort: Desc)])
+  @@index([category, available])
+  @@map("services")
+}
+
+model Transaction {
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requesterId          String    @map("requester_id") @db.Uuid
+  providerId           String    @map("provider_id") @db.Uuid
+  serviceId            String?   @map("service_id") @db.Uuid
+  jobId                String?   @map("job_id") @db.Uuid
+  randAmount           Decimal   @map("rand_amount") @db.Decimal(12, 2)
+  status               String    @default("pending")
+  escrowStatus         String    @default("held") @map("escrow_status")
+  jobDescriptionImages Json      @default("[]") @map("job_description_images")
+  proofImages          Json      @default("[]") @map("proof_images")
+  requesterRating      Int?      @map("requester_rating")
+  providerRating       Int?      @map("provider_rating")
+  requesterReview      String?   @map("requester_review")
+  providerReview       String?   @map("provider_review")
+  negotiatedAmount     Decimal?  @map("negotiated_amount") @db.Decimal(12, 2)
+  paymentMethod        String    @default("cash") @map("payment_method")
+  negotiationHistory   Json      @default("[]") @map("negotiation_history")
+  lat                  Float?
+  lng                  Float?
+  completedAt          DateTime? @map("completed_at") @db.Timestamptz(6)
+  partialReleaseAmount Decimal   @default(0) @map("partial_release_amount") @db.Decimal(12, 2)
+  partialReleasedAt    DateTime? @map("partial_released_at") @db.Timestamptz(6)
+  partialReleasedBy    String?   @map("partial_released_by") @db.Uuid
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  requester User     @relation("Requester", fields: [requesterId], references: [id])
+  provider  User     @relation("Provider", fields: [providerId], references: [id])
+  service   Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  job       Job?     @relation("TransactionJob", fields: [jobId], references: [id], onDelete: SetNull)
+  jobsUsing Job[]    @relation("JobTransaction")
+  messages  Message[]
+  reviews   Review[]
+
+  @@index([requesterId, status, createdAt(sort: Desc)])
+  @@index([providerId, status, createdAt(sort: Desc)])
+  @@index([jobId])
+  @@map("transactions")
+}
+
+model Job {
+  id                          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  posterId                    String    @map("poster_id") @db.Uuid
+  title                       String
+  description                 String
+  category                    String
+  budget                      Decimal   @db.Decimal(12, 2)
+  budgetMin                   Decimal?  @map("budget_min") @db.Decimal(12, 2)
+  budgetMax                   Decimal?  @map("budget_max") @db.Decimal(12, 2)
+  isUrgent                    Boolean   @default(false) @map("is_urgent")
+  lat                         Float
+  lng                         Float
+  images                      Json      @default("[]")
+  status                      String    @default("open")
+  acceptedApplicationId       String?   @map("accepted_application_id") @db.Uuid
+  transactionId               String?   @map("transaction_id") @db.Uuid
+  paymentMethod               String    @default("cash") @map("payment_method")
+  scheduledDate               DateTime? @map("scheduled_date") @db.Timestamptz(6)
+  proposedTime                DateTime? @map("proposed_time") @db.Timestamptz(6)
+  timeIsNegotiable            Boolean   @default(true) @map("time_is_negotiable")
+  applicationDeadline         DateTime? @map("application_deadline") @db.Timestamptz(6)
+  publishAt                   DateTime? @map("publish_at") @db.Timestamptz(6)
+  expiresAt                   DateTime? @map("expires_at") @db.Timestamptz(6)
+  estimatedDuration           String?   @map("estimated_duration")
+  tags                        String[]  @default([])
+  workProofPhotos             Json      @default("[]") @map("work_proof_photos")
+  completionRequest           Json?     @map("completion_request")
+  startedAt                   DateTime? @map("started_at") @db.Timestamptz(6)
+  completedAt                 DateTime? @map("completed_at") @db.Timestamptz(6)
+  posterReviewed              Boolean   @default(false) @map("poster_reviewed")
+  providerReviewed            Boolean   @default(false) @map("provider_reviewed")
+  posterReview                Json?     @map("poster_review")
+  providerReview              Json?     @map("provider_review")
+  handshakeLog                Json      @default("[]") @map("handshake_log")
+  qrHandshakes                Json      @default("[]") @map("qr_handshakes")
+  qrConfirmedBy               String[]  @default([]) @map("qr_confirmed_by") @db.Uuid
+  paymentConfirmed            Boolean   @default(false) @map("payment_confirmed")
+  paymentConfirmedAt          DateTime? @map("payment_confirmed_at") @db.Timestamptz(6)
+  paymentConfirmedBy          String[]  @default([]) @map("payment_confirmed_by") @db.Uuid
+  partialEscrowReleased       Boolean   @default(false) @map("partial_escrow_released")
+  partialEscrowAmount         Decimal   @default(0) @map("partial_escrow_amount") @db.Decimal(12, 2)
+  partialEscrowReleasedAt     DateTime? @map("partial_escrow_released_at") @db.Timestamptz(6)
+  paymentWaitTimeMinutes      Float?    @map("payment_wait_time_minutes")
+  issueReports                Json      @default("[]") @map("issue_reports")
+  stoppedAt                   DateTime? @map("stopped_at") @db.Timestamptz(6)
+  stoppedBy                   String?   @map("stopped_by") @db.Uuid
+  helperCompletedAt           DateTime? @map("helper_completed_at") @db.Timestamptz(6)
+  posterConfirmedAt           DateTime? @map("poster_confirmed_at") @db.Timestamptz(6)
+  helperCompletionDurationMinutes Float? @map("helper_completion_duration_minutes")
+  posterConfirmationDurationMinutes Float? @map("poster_confirmation_duration_minutes")
+  manualStartAllowedByPoster  Boolean   @default(false) @map("manual_start_allowed_by_poster")
+  manualStartPermissionAt     DateTime? @map("manual_start_permission_at") @db.Timestamptz(6)
+  manualStartPermissionBy     String?   @map("manual_start_permission_by") @db.Uuid
+  createdAt                   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  poster       User          @relation(fields: [posterId], references: [id])
+  transaction  Transaction?  @relation("JobTransaction", fields: [transactionId], references: [id], onDelete: SetNull)
+  transactions Transaction[] @relation("TransactionJob")
+  applications Application[]
+  reviews      Review[]
+
+  @@index([posterId, status, createdAt(sort: Desc)])
+  @@index([status, category, createdAt(sort: Desc)])
+  @@index([transactionId])
+  @@map("jobs")
+}
+
+model Application {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  jobId              String    @map("job_id") @db.Uuid
+  applicantId        String    @map("applicant_id") @db.Uuid
+  proposedAmount     Decimal   @map("proposed_amount") @db.Decimal(12, 2)
+  proposedTime       DateTime? @map("proposed_time") @db.Timestamptz(6)
+  timeAdjustment     DateTime? @map("time_adjustment") @db.Timestamptz(6)
+  approvedTime       DateTime? @map("approved_time") @db.Timestamptz(6)
+  approvedAmount     Decimal?  @map("approved_amount") @db.Decimal(12, 2)
+  message            String    @default("")
+  status             String    @default("pending")
+  negotiationHistory Json      @default("[]") @map("negotiation_history")
+  pingCount          Int       @default(0) @map("ping_count")
+  autoPingSent       Boolean   @default(false) @map("auto_ping_sent")
+  firstPingAt        DateTime? @map("first_ping_at") @db.Timestamptz(6)
+  lastPingAt         DateTime? @map("last_ping_at") @db.Timestamptz(6)
+  pingLog            Json      @default("[]") @map("ping_log")
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  job       Job  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  applicant User @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+
+  @@unique([jobId, applicantId])
+  @@index([applicantId, status])
+  @@map("applications")
+}
+
+model Review {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  transactionId    String?   @map("transaction_id") @db.Uuid
+  jobId            String?   @map("job_id") @db.Uuid
+  reviewerId       String    @map("reviewer_id") @db.Uuid
+  revieweeId       String    @map("reviewee_id") @db.Uuid
+  serviceId        String?   @map("service_id") @db.Uuid
+  categories       Json      @default("{}")
+  overallRating    Int       @map("overall_rating")
+  comment          String?
+  isConstructive   Boolean   @default(false) @map("is_constructive")
+  isVisible        Boolean   @default(true) @map("is_visible")
+  moderatedAt      DateTime? @map("moderated_at") @db.Timestamptz(6)
+  moderationReason String?   @map("moderation_reason")
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  job         Job?         @relation(fields: [jobId], references: [id], onDelete: SetNull)
+  reviewer    User         @relation("Reviewer", fields: [reviewerId], references: [id], onDelete: Cascade)
+  reviewee    User         @relation("Reviewee", fields: [revieweeId], references: [id], onDelete: Cascade)
+  service     Service?     @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+
+  @@index([revieweeId, createdAt(sort: Desc)])
+  @@index([reviewerId, createdAt(sort: Desc)])
+  @@index([serviceId, createdAt(sort: Desc)])
+  @@index([transactionId])
+  @@map("reviews")
+}
+
+model Message {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  transactionId String   @map("transaction_id") @db.Uuid
+  senderId      String   @map("sender_id") @db.Uuid
+  receiverId    String   @map("receiver_id") @db.Uuid
+  text          String
+  type          String   @default("text")
+  offerAmount   Decimal? @map("offer_amount") @db.Decimal(12, 2)
+  read          Boolean  @default(false)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  sender      User        @relation("Sender", fields: [senderId], references: [id], onDelete: Cascade)
+  receiver    User        @relation("Receiver", fields: [receiverId], references: [id], onDelete: Cascade)
+
+  @@index([transactionId, createdAt])
+  @@map("messages")
+}
+
+model Notification {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  type      String
+  title     String
+  message   String
+  jobId     String?  @map("job_id") @db.Uuid
+  data      Json?
+  read      Boolean  @default(false)
+  clicked   Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([jobId])
+  @@map("notifications")
+}
+
+model SmsVerification {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  phone     String
+  code      String
+  verified  Boolean  @default(false)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("sms_verifications")
+}
+
+model Verification {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  idFront     String    @map("id_front")
+  idBack      String    @map("id_back")
+  selfie      String
+  idNumber    String?   @map("id_number")
+  verified    Boolean   @default(false)
+  verifiedAt  DateTime? @map("verified_at") @db.Timestamptz(6)
+  submittedAt DateTime  @default(now()) @map("submitted_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("verifications")
+}

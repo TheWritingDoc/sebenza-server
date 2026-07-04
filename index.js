@@ -1,7 +1,6 @@
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const mongoose = require('mongoose');
 const cors = require('cors');
 const multer = require('multer');
 const bcrypt = require('bcryptjs');
@@ -15,7 +14,8 @@ const { body, validationResult } = require('express-validator');
 require('dotenv').config();
 
 const upload = require('./middleware/upload');
-const { whitelistSelf } = require('./lib/atlas-whitelist');
+const { prisma } = require('./db');
+const { toDTO, sanitizeUser } = require('./utils/dto');
 
 // Import currency configuration
 const currency = require('./config/currency');
@@ -33,34 +33,25 @@ if (isProd && (!JWT_SECRET || JWT_SECRET === 'your-secret-key')) {
 const effectiveJwtSecret = JWT_SECRET || 'your-secret-key';
 process.env.JWT_SECRET = effectiveJwtSecret; // ensure all routes/middleware use the same secret
 
-
-// Flag to track MongoDB connection status
-let useMongoDB = true;
-let mongoConnected = false;
-
-
-
-// In-memory storage for demo mode
-
-const memStorage = {
-
-  users: [],
-
-  services: [],
-
-  transactions: [],
-
-  notifications: [],
-
-  userIdCounter: 1,
-
-  serviceIdCounter: 1,
-
-  transactionIdCounter: 1
-
-};
-
-
+// Postgres (Supabase) connection status — used by /api/health and the socket
+// handlers so a transient DB outage degrades gracefully instead of crashing.
+let dbConnected = false;
+async function connectDatabase() {
+  let delay = 5000;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await prisma.$queryRaw`SELECT 1`;
+      dbConnected = true;
+      console.log('Connected to Postgres (Supabase)');
+      return;
+    } catch (err) {
+      console.error(`Postgres connection attempt ${attempt} failed:`, err.message);
+      await new Promise(resolve => setTimeout(resolve, delay));
+      delay = Math.min(Math.round(delay * 1.5), 60000);
+    }
+  }
+}
+connectDatabase();
 
 // Security middleware
 app.use(helmet({
@@ -85,7 +76,6 @@ const apiLimiter = rateLimit({
 });
 
 // Trust the Render proxy so req.ip and X-Forwarded-For are accurate.
-// Must be set before any middleware that reads the client IP.
 app.set('trust proxy', 1);
 
 app.use('/api/', apiLimiter);
@@ -96,10 +86,8 @@ const allowedOrigins = new Set(rawCorsOrigins.split(',').map(s => s.trim()).filt
 
 const corsOptions = {
   origin: (origin, callback) => {
-    // Allow requests with no origin (mobile apps, server-to-server, curl)
     if (!origin) return callback(null, true);
     if (allowedOrigins.has(origin)) return callback(null, true);
-    // Allow ngrok in non-production environments only
     if (!isProd && (origin.includes('ngrok-free.dev') || origin.includes('ngrok.io'))) {
       return callback(null, true);
     }
@@ -120,12 +108,11 @@ app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 // header, which makes CSRF cookie-based protection unnecessary and breaks cross-origin
 // mobile/WebView clients. XSS is mitigated by input validation, Helmet, and CSP.
 
-// When Cloudinary is not configured, uploads fall back to local disk. Mount the
-// fallback static routes only in that case. Once Cloudinary env vars are set,
-// remove these routes and uploads are served from Cloudinary URLs.
-const { cloudinaryEnabled } = require('./middleware/upload');
+// When Supabase Storage is not configured (local dev), uploads fall back to
+// local disk — mount the static routes only in that case.
+const { storageEnabled } = require('./middleware/upload');
 const UPLOADS_BASE = path.join(__dirname, 'uploads');
-if (!cloudinaryEnabled) {
+if (!storageEnabled) {
   app.use('/uploads/profiles', express.static(path.join(UPLOADS_BASE, 'profiles')));
   app.use('/uploads/proof', express.static(path.join(UPLOADS_BASE, 'proof')));
   app.use('/uploads/services', express.static(path.join(UPLOADS_BASE, 'services')));
@@ -143,144 +130,50 @@ app.use('/downloads', express.static(path.join(__dirname, 'downloads'), {
   }
 }));
 
-// Serve static files from the React build. The build lives at ./client/build
-// both locally and on Render, so resolve it the same way everywhere. (The old
-// ../client/build_v2 fallback pointed outside the repo and never existed,
-// which broke local serving of the SPA.)
+// Serve static files from the React build.
 const buildPath = path.join(__dirname, 'client', 'build');
 app.use(express.static(buildPath));
 
-// MongoDB Connection with retry logic
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/sebenza';
-
-// Production-safe Atlas connection options: fail fast on a bad primary,
-// keep a bounded pool, and don't let a single slow query hang forever.
-const MONGO_OPTIONS = {
-  serverSelectionTimeoutMS: 10000,
-  socketTimeoutMS: 45000,
-  maxPoolSize: 10,
-  family: 4
-};
-
-// Startup order matters: whitelist this instance's IP in Atlas BEFORE trying
-// to connect. A fresh Render instance often has an IP that isn't in the Atlas
-// access list yet — gating the whitelist behind a successful connection was a
-// chicken-and-egg lockout that left the server stuck in DEMO mode after
-// deploys. Then retry the connection forever with capped backoff: the app
-// serves the static client meanwhile and heals itself once Atlas is reachable
-// (access-list changes take ~30-60s to propagate).
-async function ensureAtlasAccessAndConnect() {
-  if (process.env.MONGODB_ATLAS_PUBLIC_KEY && process.env.MONGODB_ATLAS_PRIVATE_KEY) {
-    try {
-      const result = await whitelistSelf({ comment: 'Auto-whitelisted on Sebenza server startup' });
-      console.log(`Atlas IP whitelist: ${result.alreadyWhitelisted ? 'already allowed' : 'added'} ${result.ip}`);
-    } catch (err) {
-      console.warn('Atlas auto-whitelist failed (non-fatal):', err.message);
-    }
-  }
-
-  let delay = 5000;
-  for (let attempt = 1; ; attempt++) {
-    try {
-      await mongoose.connect(MONGODB_URI, MONGO_OPTIONS);
-      console.log('Connected to MongoDB');
-      mongoConnected = true;
-      return;
-    } catch (err) {
-      console.error(`MongoDB connection attempt ${attempt} failed:`, err.message);
-      await new Promise(resolve => setTimeout(resolve, delay));
-      delay = Math.min(Math.round(delay * 1.5), 60000);
-    }
-  }
-}
-
-ensureAtlasAccessAndConnect();
-
-
-
-// Import Models (only use if MongoDB is connected)
-
-let User, Service, Transaction, Verification, SMSVerification, Message, Review, Job;
-
-
-
-if (useMongoDB) {
-
-  User = require('./models/User');
-
-  Service = require('./models/Service');
-
-  Transaction = require('./models/Transaction');
-
-  Verification = require('./models/Verification');
-
-  SMSVerification = require('./models/SMSVerification');
-
-  Message = require('./models/Message');
-  Review = require('./models/Review');
-  Job = require('./models/Job');
-
-}
-
-
-
 // Import Routes
-
 const verificationRoutes = require('./routes/verification');
-
 const smsRoutes = require('./routes/sms');
-
 const transactionRoutes = require('./routes/transactions');
-
 const serviceRoutes = require('./routes/services');
 const userRoutes = require('./routes/users');
 const messageRoutes = require('./routes/messages');
 const reviewRoutes = require('./routes/reviews');
 const jobRoutes = require('./routes/jobs');
 const adminRoutes = require('./routes/admin');
-
-
+const notificationRoutes = require('./routes/notifications');
+const teamRoutes = require('./routes/teams');
 
 // API Versioning - v1 routes
 const API_VERSION = '/api/v1';
 
-// Use Routes only if MongoDB is connected
-if (useMongoDB) {
-  // Legacy routes (backward compatible)
-  app.use('/api/verification', verificationRoutes);
-  app.use('/api/sms', smsRoutes);
-  app.use('/api/transactions', transactionRoutes);
-  app.use('/api/services', serviceRoutes);
-  app.use('/api/users', userRoutes);
-  app.use('/api/messages', messageRoutes);
-  app.use('/api/reviews', reviewRoutes);
-  app.use('/api/jobs', jobRoutes);
-  app.use('/api/notifications', require('./routes/notifications'));
-  app.use('/api/admin', adminRoutes);
-  app.use('/api/teams', require('./routes/teams'));
+// Legacy routes (backward compatible)
+app.use('/api/verification', verificationRoutes);
+app.use('/api/sms', smsRoutes);
+app.use('/api/transactions', transactionRoutes);
+app.use('/api/services', serviceRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/api/reviews', reviewRoutes);
+app.use('/api/jobs', jobRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/api/admin', adminRoutes);
+app.use('/api/teams', teamRoutes);
 
-  // Versioned routes (v1)
-  app.use(`${API_VERSION}/verification`, verificationRoutes);
-  app.use(`${API_VERSION}/sms`, smsRoutes);
-  app.use(`${API_VERSION}/transactions`, transactionRoutes);
-  app.use(`${API_VERSION}/services`, serviceRoutes);
-  app.use(`${API_VERSION}/users`, userRoutes);
-  app.use(`${API_VERSION}/messages`, messageRoutes);
-  app.use(`${API_VERSION}/reviews`, reviewRoutes);
-  app.use(`${API_VERSION}/jobs`, jobRoutes);
-  app.use(`${API_VERSION}/notifications`, require('./routes/notifications'));
-  app.use(`${API_VERSION}/admin`, adminRoutes);
-
-  // DEBUG: test endpoint to verify /api/jobs routing is working
-  app.all('/api/jobs/:id/qr-test', (req, res) => {
-    res.json({ ok: true, method: req.method, id: req.params.id, message: 'QR route test OK' });
-  });
-
-}
-
-
-
-
+// Versioned routes (v1)
+app.use(`${API_VERSION}/verification`, verificationRoutes);
+app.use(`${API_VERSION}/sms`, smsRoutes);
+app.use(`${API_VERSION}/transactions`, transactionRoutes);
+app.use(`${API_VERSION}/services`, serviceRoutes);
+app.use(`${API_VERSION}/users`, userRoutes);
+app.use(`${API_VERSION}/messages`, messageRoutes);
+app.use(`${API_VERSION}/reviews`, reviewRoutes);
+app.use(`${API_VERSION}/jobs`, jobRoutes);
+app.use(`${API_VERSION}/notifications`, notificationRoutes);
+app.use(`${API_VERSION}/admin`, adminRoutes);
 
 // JWT Middleware
 const auth = (req, res, next) => {
@@ -290,7 +183,7 @@ const auth = (req, res, next) => {
     return res.status(401).json({ error: 'No token provided' });
   }
   try {
-    const decoded = jwt.verify(token, JWT_SECRET);
+    const decoded = jwt.verify(token, effectiveJwtSecret);
     req.userId = decoded.userId;
     next();
   } catch (err) {
@@ -304,14 +197,6 @@ const auth = (req, res, next) => {
   }
 };
 
-
-
-// ==================== DEMO MODE ENDPOINTS ====================
-
-// These work without MongoDB using in-memory storage
-
-
-
 // Helper: generate unique referral code
 function generateReferralCode(name) {
   const clean = (name || 'user').replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 4);
@@ -319,12 +204,39 @@ function generateReferralCode(name) {
   return `${clean}${random}`;
 }
 
-// MongoDB: Register with validation
+// Shape the auth payload the client stores in localStorage after register/login.
+function authUserPayload(user) {
+  return {
+    id: user.id,
+    _id: user.id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone,
+    credits: Number(user.credits),
+    randBalance: Number(user.randBalance),
+    escrowRand: Number(user.escrowRand),
+    totalEarnedRand: Number(user.totalEarnedRand),
+    skills: user.skills,
+    primaryCategory: user.primaryCategory,
+    freeServiceUsed: user.freeServiceUsed,
+    location: { lat: user.lat, lng: user.lng },
+    verified: user.verified,
+    phoneVerified: user.phoneVerified,
+    emailVerified: user.emailVerified,
+    profileImage: user.profileImage || '',
+    referralCode: user.referralCode,
+    referralCount: user.referralCount,
+    accountType: user.accountType || 'individual',
+    businessName: user.businessName || '',
+    teamSize: user.teamSize || 1
+  };
+}
+
+// Register with validation
 app.post('/api/register', authLimiter, [
   body('name').trim().isLength({ min: 2, max: 100 }).withMessage('Name must be 2-100 characters'),
   body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
-  // Strip spaces/dashes/parens so "071 234 5678" and "+27 71 234 5678" pass validation
   body('phone').optional().customSanitizer(v => String(v || '').replace(/[\s\-().]/g, ''))
     .custom(v => v === '' || /^\+?\d{9,15}$/.test(v)).withMessage('Valid phone number required')
 ], async (req, res) => {
@@ -335,101 +247,66 @@ app.post('/api/register', authLimiter, [
     }
 
     const { name, email, phone, password, location, skills, primaryCategory, ref, accountType, businessName, teamSize } = req.body;
-    
-    const existingUser = await User.findOne({ email });
+
+    const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
       return res.status(400).json({ error: 'User already exists' });
     }
 
-    // Convert { lat, lng } to GeoJSON format
-    let geoLocation = { 
-      type: 'Point', 
-      coordinates: [0, 0],
-      lat: 0,
-      lng: 0
-    };
-    
-    if (location && location.lat != null && location.lng != null) {
-      geoLocation = {
-        type: 'Point',
-        coordinates: [location.lng, location.lat],  // GeoJSON: [lng, lat]
-        lat: location.lat,
-        lng: location.lng
-      };
-    }
-
     // Handle referral
-    let referredBy = null;
+    let referredById = null;
     if (ref) {
-      const referrer = await User.findOne({ referralCode: ref.toUpperCase() });
+      const referrer = await prisma.user.findUnique({ where: { referralCode: ref.toUpperCase() } });
       if (referrer) {
-        referredBy = referrer._id;
-        referrer.referralCount = (referrer.referralCount || 0) + 1;
-        await referrer.save();
+        referredById = referrer.id;
+        await prisma.user.update({
+          where: { id: referrer.id },
+          data: { referralCount: { increment: 1 } }
+        });
       }
     }
 
     // Generate unique referral code
     let referralCode = generateReferralCode(name);
-    let codeExists = await User.findOne({ referralCode });
-    while (codeExists) {
+    while (await prisma.user.findUnique({ where: { referralCode } })) {
       referralCode = generateReferralCode(name);
-      codeExists = await User.findOne({ referralCode });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const user = await User.create({
-      name,
-      email,
-      phone: phone || '',
-      password: hashedPassword,
-      location: geoLocation,
-      skills: skills?.length > 0 ? skills : ['General work/Helper'],
-      primaryCategory: primaryCategory || 'General work/Helper',
-      credits: 1000,
-      randBalance: 1000,
-      escrowRand: 0,
-      totalEarnedRand: 0,
-      rating: 0,
-      verified: false,
-      phoneVerified: false,
-      referralCode,
-      referredBy,
-      accountType: ['individual', 'team', 'business'].includes(accountType) ? accountType : 'individual',
-      businessName: String(businessName || '').trim().slice(0, 120),
-      teamSize: Math.max(1, Math.min(50, parseInt(teamSize) || 1))
-    });
-
-    const token = jwt.sign({ userId: user._id.toString() }, JWT_SECRET, { expiresIn: '30d' });
-
-    res.json({
-      token,
-      user: {
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        credits: user.credits,
-        randBalance: user.randBalance,
-        escrowRand: user.escrowRand,
-        totalEarnedRand: user.totalEarnedRand,
-        skills: user.skills,
-        primaryCategory: user.primaryCategory,
-        location: { lat: user.location.lat, lng: user.location.lng },
-        verified: user.verified,
-        phoneVerified: user.phoneVerified,
-        referralCode: user.referralCode,
-        referralCount: user.referralCount,
-        accountType: user.accountType,
-        businessName: user.businessName,
-        teamSize: user.teamSize
+    const user = await prisma.user.create({
+      data: {
+        name,
+        email,
+        phone: phone || '',
+        password: hashedPassword,
+        lat: location?.lat ?? 0,
+        lng: location?.lng ?? 0,
+        skills: skills?.length > 0 ? skills : ['General work/Helper'],
+        primaryCategory: primaryCategory || 'General work/Helper',
+        referralCode,
+        referredById,
+        accountType: ['individual', 'team', 'business'].includes(accountType) ? accountType : 'individual',
+        businessName: String(businessName || '').trim().slice(0, 120),
+        teamSize: Math.max(1, Math.min(50, parseInt(teamSize) || 1)),
+        communityStats: {
+          reliabilityScore: 100, givenRatingsAvg: 0, receivedRatingsAvg: 0,
+          totalGivenReviews: 0, totalReceivedReviews: 0, complainerScore: 0,
+          completionRate: 100, cancellationRate: 0, disputeRate: 0,
+          jobsCompleted: 0, jobsRequested: 0, timeWasterFlags: 0,
+          providerLateFlags: 0, impatientFlags: 0
+        }
       }
     });
+
+    const token = jwt.sign({ userId: user.id }, effectiveJwtSecret, { expiresIn: '30d' });
+    res.json({ token, user: authUserPayload(user) });
   } catch (err) {
     console.error('Register error:', err);
     res.status(500).json({ error: 'Server error', details: err.message });
   }
-});// MongoDB: Login with validation
+});
+
+// Login with validation
 app.post('/api/login', authLimiter, [
   body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
   body('password').isLength({ min: 1 }).withMessage('Password required')
@@ -441,99 +318,59 @@ app.post('/api/login', authLimiter, [
     }
 
     const { email, password } = req.body;
-    
-    const user = await User.findOne({ email });
+    const user = await prisma.user.findUnique({ where: { email } });
     if (!user) {
       return res.status(400).json({ error: 'Invalid credentials' });
     }
 
-    // Check if account is locked
-    if (user.lockUntil && user.lockUntil > Date.now()) {
-      return res.status(423).json({ 
-        error: 'Account temporarily locked due to too many failed attempts. Please try again later.' 
+    if (user.lockUntil && user.lockUntil > new Date()) {
+      return res.status(423).json({
+        error: 'Account temporarily locked due to too many failed attempts. Please try again later.'
       });
     }
 
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      // Increment login attempts
-      user.loginAttempts = (user.loginAttempts || 0) + 1;
-      
-      // Lock account after 5 failed attempts for 30 minutes
-      if (user.loginAttempts >= 5) {
-        user.lockUntil = new Date(Date.now() + 30 * 60 * 1000); // 30 minutes
-        user.loginAttempts = 0;
-        await user.save();
-        return res.status(423).json({ 
-          error: 'Account locked for 30 minutes due to too many failed login attempts.' 
+      const attempts = (user.loginAttempts || 0) + 1;
+      if (attempts >= 5) {
+        await prisma.user.update({
+          where: { id: user.id },
+          data: { lockUntil: new Date(Date.now() + 30 * 60 * 1000), loginAttempts: 0 }
+        });
+        return res.status(423).json({
+          error: 'Account locked for 30 minutes due to too many failed login attempts.'
         });
       }
-      
-      await user.save();
+      await prisma.user.update({ where: { id: user.id }, data: { loginAttempts: attempts } });
       return res.status(400).json({ error: 'Invalid credentials' });
     }
 
-    // Update login tracking
-    user.lastLoginAt = new Date();
-    user.loginAttempts = 0;
-    await user.save();
-
-    const token = jwt.sign({ userId: user._id.toString() }, JWT_SECRET, { expiresIn: '30d' });
-
-    res.json({
-      token,
-      user: {
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        phone: user.phone,
-        randBalance: user.randBalance,
-        escrowRand: user.escrowRand,
-        totalEarnedRand: user.totalEarnedRand,
-        skills: user.skills,
-        primaryCategory: user.primaryCategory,
-        freeServiceUsed: user.freeServiceUsed,
-        verified: user.verified,
-        phoneVerified: user.phoneVerified,
-        emailVerified: user.emailVerified || false,
-        profileImage: user.profileImage || '',
-        referralCode: user.referralCode,
-        location: user.location ? { lat: user.location.lat, lng: user.location.lng } : null,
-        accountType: user.accountType || 'individual',
-        businessName: user.businessName || '',
-        teamSize: user.teamSize || 1
-      }
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { lastLoginAt: new Date(), loginAttempts: 0 }
     });
+
+    const token = jwt.sign({ userId: user.id }, effectiveJwtSecret, { expiresIn: '30d' });
+    res.json({ token, user: authUserPayload(user) });
   } catch (err) {
+    console.error('Login error:', err);
     res.status(500).json({ error: 'Server error', details: err.message });
   }
 });
 
-
-
-// MongoDB: Get Profile
+// Get Profile
 app.get('/api/profile', auth, async (req, res) => {
   try {
-    const user = await User.findById(req.userId).select('-password');
+    const user = await prisma.user.findUnique({ where: { id: req.userId } });
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
-    
-    const userObj = user.toObject();
+    const dto = sanitizeUser(user);
     res.json({
-      ...userObj,
-      credits: userObj.credits || 1000,
-      formattedBalance: 'R' + ((userObj.credits || 1000) / 100).toFixed(2),
-      location: userObj.location ? { 
-        lat: userObj.location.lat || userObj.location.coordinates?.[1], 
-        lng: userObj.location.lng || userObj.location.coordinates?.[0] 
-      } : null,
-      isOnline: userObj.isOnline,
-      showOnlineStatus: userObj.showOnlineStatus,
-      lastActive: userObj.lastActive,
-      profileImage: userObj.profileImage,
-      primaryCategory: userObj.primaryCategory,
-      freeServiceUsed: userObj.freeServiceUsed
+      ...dto,
+      credits: Number(user.credits) || 1000,
+      formattedBalance: 'R' + ((Number(user.credits) || 1000) / 100).toFixed(2),
+      location: { lat: user.lat, lng: user.lng }
     });
   } catch (err) {
     res.status(500).json({ error: 'Server error', details: err.message });
@@ -541,84 +378,80 @@ app.get('/api/profile', auth, async (req, res) => {
 });
 
 // Upload profile image
-
 app.post('/api/users/profile-image', auth, upload.single('profileImage'), async (req, res) => {
-
   try {
-
     if (!req.file) {
-
       return res.status(400).json({ error: 'No image uploaded' });
-
     }
-
-    
 
     const { uploadFile } = require('./middleware/upload');
     const imageUrl = await uploadFile(req.file, 'profiles');
 
-    
-
-    // Update user in DB
-    const user = await User.findByIdAndUpdate(
-      req.userId,
-      { profileImage: imageUrl },
-      { new: true }
-    );
+    await prisma.user.update({
+      where: { id: req.userId },
+      data: { profileImage: imageUrl }
+    });
 
     // Adding a face photo raises identity trust stars
     try {
       const { refreshTrust } = require('./utils/trustScore');
-      await refreshTrust(User, req.userId);
+      await refreshTrust(prisma, req.userId);
     } catch (e) { console.error('Trust refresh (photo) failed:', e.message); }
 
     res.json({
       message: 'Profile image uploaded successfully',
-      imageUrl: imageUrl,
+      imageUrl,
       user: { profileImage: imageUrl }
     });
-
   } catch (err) {
-
     console.error('Profile image upload error:', err);
-
     res.status(500).json({ error: 'Server error uploading image' });
-
   }
-
 });
-
-
-
-
 
 // Public profile view (no auth required)
 app.get('/api/users/:id', async (req, res) => {
   try {
-    const user = await User.findById(req.params.id)
-      .select('-password -bankAccount -email -phone')
-      .lean();
+    const user = await prisma.user.findUnique({
+      where: { id: req.params.id },
+      include: { workExperience: { orderBy: { addedAt: 'desc' } } }
+    });
     if (!user) return res.status(404).json({ error: 'User not found' });
-    
-    // Respect privacy setting
-    if (user.showOnlineStatus === false) {
-      user.isOnline = false;
-      user.lastActive = undefined;
-    }
-    
-    const services = await Service.find({ providerId: req.params.id, available: true })
-      .select('title description category randAmount images location averageRating completedJobsCount totalReviews pricingType tags estimatedDuration')
-      .lean();
 
-    // Fetch recent visible reviews
-    const reviews = await Review.find({ revieweeId: req.params.id, isVisible: true })
-      .populate('reviewerId', 'name avatar')
-      .populate('serviceId', 'title category')
-      .sort({ createdAt: -1 })
-      .limit(10)
-      .lean();
-    
-    res.json({ ...user, services, reviews });
+    const dto = sanitizeUser(user, ['bankAccount', 'email', 'phone', 'emailVerificationExpires']);
+    if (user.showOnlineStatus === false) {
+      dto.isOnline = false;
+      delete dto.lastActive;
+    }
+    dto.location = { lat: user.lat, lng: user.lng };
+
+    const services = await prisma.service.findMany({
+      where: { providerId: req.params.id, available: true },
+      select: {
+        id: true, title: true, description: true, category: true, randAmount: true,
+        images: true, lat: true, lng: true, averageRating: true,
+        completedJobsCount: true, totalReviews: true, pricingType: true,
+        tags: true, estimatedDuration: true
+      }
+    });
+
+    const reviews = await prisma.review.findMany({
+      where: { revieweeId: req.params.id, isVisible: true },
+      include: {
+        reviewer: { select: { id: true, name: true, avatar: true } },
+        service: { select: { id: true, title: true, category: true } }
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 10
+    });
+
+    // Client reads reviewerId.name / serviceId.title (Mongo populate shape)
+    const reviewDTOs = reviews.map(r => {
+      const { reviewer, service, ...rest } = r;
+      return { ...rest, reviewerId: reviewer, serviceId: service };
+    });
+
+    res.json({ ...dto, services: toDTO(services), reviews: toDTO(reviewDTOs) });
   } catch (err) {
     console.error('Public profile error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -629,20 +462,16 @@ app.get('/api/users/:id', async (req, res) => {
 app.put('/api/users/status', auth, async (req, res) => {
   try {
     const { isOnline, showOnlineStatus } = req.body;
-    const update = { lastActive: new Date() };
-    if (typeof isOnline === 'boolean') update.isOnline = isOnline;
-    if (typeof showOnlineStatus === 'boolean') update.showOnlineStatus = showOnlineStatus;
-    
-    const user = await User.findByIdAndUpdate(
-      req.userId,
-      update,
-      { new: true }
-    ).select('-password');
-    res.json({ 
-      message: 'Status updated', 
-      isOnline: user.isOnline, 
+    const data = { lastActive: new Date() };
+    if (typeof isOnline === 'boolean') data.isOnline = isOnline;
+    if (typeof showOnlineStatus === 'boolean') data.showOnlineStatus = showOnlineStatus;
+
+    const user = await prisma.user.update({ where: { id: req.userId }, data });
+    res.json({
+      message: 'Status updated',
+      isOnline: user.isOnline,
       showOnlineStatus: user.showOnlineStatus,
-      lastActive: user.lastActive 
+      lastActive: user.lastActive
     });
   } catch (err) {
     res.status(500).json({ error: 'Server error' });
@@ -653,35 +482,11 @@ app.put('/api/users/status', auth, async (req, res) => {
 app.put('/api/users/location', auth, async (req, res) => {
   try {
     const { lat, lng } = req.body;
-    
     if (lat == null || lng == null) {
       return res.status(400).json({ error: 'Latitude and longitude required' });
     }
-    
-    if (mongoConnected && User) {
-      const user = await User.findByIdAndUpdate(
-        req.userId,
-        { 
-          location: {
-            type: 'Point',
-            coordinates: [lng, lat],
-            lat: lat,
-            lng: lng
-          }
-        },
-        { new: true }
-      );
-      res.json({ message: 'Location updated', location: { lat, lng } });
-    } else {
-      // In-memory fallback
-      const user = memStorage.users.find(u => u._id === req.userId);
-      if (user) {
-        user.location = { type: 'Point', coordinates: [lng, lat], lat, lng };
-        res.json({ message: 'Location updated', location: { lat, lng } });
-      } else {
-        res.status(404).json({ error: 'User not found' });
-      }
-    }
+    await prisma.user.update({ where: { id: req.userId }, data: { lat, lng } });
+    res.json({ message: 'Location updated', location: { lat, lng } });
   } catch (err) {
     console.error('Location update error:', err);
     res.status(500).json({ error: 'Server error updating location' });
@@ -689,49 +494,23 @@ app.put('/api/users/location', auth, async (req, res) => {
 });
 
 // Health check
-
 app.get('/api/health', async (req, res) => {
-
-  res.json({ 
-
-    status: 'ok', 
-
-    mode: mongoConnected ? 'MONGODB' : 'DEMO',
-
+  res.json({
+    status: 'ok',
+    mode: dbConnected ? 'POSTGRES' : 'CONNECTING',
     features: ['auth', 'verification', 'sms', 'escrow', 'transactions', 'rand-conversion', 'image-upload'],
-
     currency: {
-
       code: currency.CURRENCY_CODE,
-
       symbol: currency.CURRENCY_SYMBOL,
-
       creditToRandRate: currency.CREDIT_TO_RAND_RATE
-
     },
-
     stats: {
-
-      users: mongoConnected ? await User.countDocuments().catch(() => 0) : memStorage.users.length,
-
-      services: mongoConnected ? await Service.countDocuments().catch(() => 0) : memStorage.services.length,
-
-      transactions: mongoConnected ? await Transaction.countDocuments().catch(() => 0) : memStorage.transactions.length
-
+      users: dbConnected ? await prisma.user.count().catch(() => 0) : 0,
+      services: dbConnected ? await prisma.service.count().catch(() => 0) : 0,
+      transactions: dbConnected ? await prisma.transaction.count().catch(() => 0) : 0
     },
-
     timestamp: new Date().toISOString()
-
   });
-
-});
-
-
-
-
-// DEBUG: verify jobs router is reachable
-app.all('/api/jobs-debug/:id/qr-test', (req, res) => {
-  res.json({ ok: true, method: req.method, id: req.params.id, ts: Date.now() });
 });
 
 // Public services endpoint (no auth required for homepage display)
@@ -739,44 +518,40 @@ app.get('/api/services/public', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 6;
     const category = req.query.category;
-    let services = [];
-    
-    const query = { available: true };
-    if (category) query.category = category;
-    
-    if (mongoConnected) {
-      services = await Service.find(query)
-        .sort({ createdAt: -1 })
-        .limit(limit)
-        .lean();
-    } else {
-      services = memStorage.services.filter(s => !category || s.category === category).slice(0, limit);
-    }
-    
+    const where = { available: true };
+    if (category) where.category = category;
+
+    const services = await prisma.service.findMany({
+      where,
+      orderBy: { createdAt: 'desc' },
+      take: limit
+    });
+
     const publicServices = services.map(s => ({
-      id: s._id || s.id,
-      providerId: s.providerId || s.provider?._id || s.provider,
+      id: s.id,
+      providerId: s.providerId,
       title: s.title,
       description: s.description,
       category: s.category,
-      randAmount: s.randAmount,
-      location: s.location,
+      randAmount: Number(s.randAmount),
+      location: { lat: s.lat, lng: s.lng },
       images: s.images || [],
-      averageRating: s.averageRating || 5,
+      averageRating: Number(s.averageRating) || 5,
       completedJobsCount: s.completedJobsCount || 0
     }));
-    
+
     res.json(publicServices);
   } catch (err) {
     console.error('Public services error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 });
+
 // Versioned health endpoint
 app.get('/api/v1/health', (req, res) => {
   res.json({
     status: 'ok',
-    mode: mongoConnected ? 'MONGODB' : 'DEMO',
+    mode: dbConnected ? 'POSTGRES' : 'CONNECTING',
     time: new Date().toISOString(),
     version: '1.0.0',
     uptime: process.uptime()
@@ -795,7 +570,6 @@ app.get('*', (req, res) => {
 
 // Error handling
 app.use((err, req, res, next) => {
-  // Multer file upload errors
   if (err.code === 'LIMIT_FILE_SIZE') {
     return res.status(413).json({ error: 'File too large. Maximum upload size is 15MB per photo.' });
   }
@@ -808,44 +582,16 @@ app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
     return res.status(400).json({ error: 'Upload error', details: err.message });
   }
-  // File type validation errors
   if (err.message && err.message.includes('Invalid file')) {
     return res.status(400).json({ error: err.message });
   }
   console.error(err.stack);
-  // Never leak internal error details/stack to clients in production.
   const body = { error: 'Something went wrong!' };
   if (!isProd) body.details = err.message;
   res.status(500).json(body);
 });
 
-
-
-// Log all registered routes on startup
-function logRoutes() {
-  console.log('\n=== REGISTERED API ROUTES ===');
-  app._router.stack.forEach((middleware) => {
-    if (middleware.route) {
-      const methods = Object.keys(middleware.route.methods).map(m => m.toUpperCase()).join(', ');
-      console.log(`  ${methods} ${middleware.route.path}`);
-    } else if (middleware.name === 'router') {
-      const basePath = middleware.regexp.toString().replace('/^\\', '').replace('\\/?(?=\/|$)/i', '').replace('\\\\', '/');
-      middleware.handle.stack.forEach((handler) => {
-        if (handler.route) {
-          const methods = Object.keys(handler.route.methods).map(m => m.toUpperCase()).join(', ');
-          const path = basePath + handler.route.path;
-          console.log(`  ${methods} ${path}`);
-        }
-      });
-    }
-  });
-  console.log('==============================\n');
-}
-
-
 const httpServer = http.createServer(app);
-
-
 
 const io = new Server(httpServer, {
   cors: {
@@ -862,7 +608,7 @@ io.use((socket, next) => {
     if (!token || token === 'null' || token === 'undefined') {
       return next(new Error('Authentication required'));
     }
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const decoded = jwt.verify(token, effectiveJwtSecret);
     socket.userId = String(decoded.userId);
     next();
   } catch (err) {
@@ -870,13 +616,11 @@ io.use((socket, next) => {
   }
 });
 
-
-
 // Track online users
 const onlineUsers = new Map();
 
 // Track job location sharing for device handshake
-const jobLocations = new Map(); // jobId -> { posterId, providerId, locations: { userId: { lat, lng, updatedAt } } }
+const jobLocations = new Map(); // jobId -> { locations, nearbyNotified, jobData }
 const PROXIMITY_THRESHOLD_KM = 0.1; // 100 meters
 
 function haversineDistance(lat1, lng1, lat2, lng2) {
@@ -891,13 +635,10 @@ app.set('io', io);
 app.set('onlineUsers', onlineUsers);
 
 io.on('connection', (socket) => {
-
   console.log('Client connected:', socket.id);
 
-  // SECURITY: never trust a client-supplied userId. The socket is already
-  // authenticated in io.use() above, which sets socket.userId from the verified
-  // JWT. Using the client's value here would let anyone claim another user's
-  // socket and receive their private notifications/messages.
+  // SECURITY: never trust a client-supplied userId — socket.userId comes from
+  // the verified JWT in io.use() above.
   socket.on('register', () => {
     if (!socket.userId) return;
     onlineUsers.set(socket.userId, socket.id);
@@ -907,12 +648,10 @@ io.on('connection', (socket) => {
     const userId = socket.userId;
     if (!userId) return;
     onlineUsers.set(userId, socket.id);
-    if (mongoConnected && User) {
-      try {
-        await User.findByIdAndUpdate(userId, { isOnline: true, lastActive: new Date() });
-      } catch (err) {
-        console.error('user_online DB error:', err.message);
-      }
+    try {
+      await prisma.user.update({ where: { id: userId }, data: { isOnline: true, lastActive: new Date() } });
+    } catch (err) {
+      console.error('user_online DB error:', err.message);
     }
     socket.broadcast.emit('user_status_changed', { userId, isOnline: true });
   });
@@ -920,43 +659,43 @@ io.on('connection', (socket) => {
   socket.on('user_away', async () => {
     const userId = socket.userId;
     if (!userId) return;
-    if (mongoConnected && User) {
-      try {
-        await User.findByIdAndUpdate(userId, { isOnline: false, lastActive: new Date() });
-      } catch (err) {
-        console.error('user_away DB error:', err.message);
-      }
+    try {
+      await prisma.user.update({ where: { id: userId }, data: { isOnline: false, lastActive: new Date() } });
+    } catch (err) {
+      console.error('user_away DB error:', err.message);
     }
     socket.broadcast.emit('user_status_changed', { userId, isOnline: false });
   });
-  
+
   socket.on('join_chat', (transactionId) => {
     socket.join(`chat_${transactionId}`);
   });
-  
+
   socket.on('send_message', async (data) => {
     const { transactionId, receiverId, text, type, offerAmount } = data;
-    // SECURITY: the sender is always the authenticated socket user, never a
-    // client-supplied id — otherwise a user could post messages as someone else.
+    // SECURITY: the sender is always the authenticated socket user.
     const senderId = socket.userId;
     if (!senderId) return;
     let savedMessage = null;
-    if (mongoConnected && Message) {
-      const message = new Message({
-        transactionId,
-        senderId,
-        receiverId,
-        text,
-        type: type || 'text',
-        offerAmount
+    try {
+      savedMessage = await prisma.message.create({
+        data: {
+          transactionId,
+          senderId,
+          receiverId,
+          text,
+          type: type || 'text',
+          offerAmount: offerAmount != null ? offerAmount : null
+        }
       });
-      savedMessage = await message.save();
+    } catch (err) {
+      console.error('send_message DB error:', err.message);
     }
     const msgPayload = {
-      _id: savedMessage?._id?.toString(),
+      _id: savedMessage?.id,
       transactionId,
-      senderId: senderId?.toString ? senderId.toString() : String(senderId),
-      receiverId: receiverId?.toString ? receiverId.toString() : String(receiverId),
+      senderId: String(senderId),
+      receiverId: String(receiverId),
       text,
       type: type || 'text',
       offerAmount,
@@ -972,31 +711,31 @@ io.on('connection', (socket) => {
       });
     }
   });
-  
-  socket.on('join_job_room', async ({ jobId, userId }) => {
-    const room = `job_${jobId}`;
 
-    // Authorization: only authenticated socket users can join; verify they are a job party
+  socket.on('join_job_room', async ({ jobId }) => {
+    const room = `job_${jobId}`;
     if (!socket.userId) return;
     const socketUserId = socket.userId;
 
     let isAuthorized = false;
-    if (mongoConnected && Job) {
-      try {
-        const job = await Job.findById(jobId)
-          .select('posterId status acceptedApplicationId applications')
-          .lean();
-        if (job) {
-          const isPoster = String(job.posterId) === socketUserId;
-          const acceptedApp = job.applications?.find(
-            a => String(a._id) === String(job.acceptedApplicationId)
-          );
-          const isProvider = acceptedApp && String(acceptedApp.applicantId) === socketUserId;
-          isAuthorized = isPoster || isProvider;
+    let job = null;
+    try {
+      job = await prisma.job.findUnique({
+        where: { id: jobId },
+        select: {
+          posterId: true, status: true, lat: true, lng: true,
+          acceptedApplicationId: true,
+          applications: { select: { id: true, applicantId: true } }
         }
-      } catch (err) {
-        console.error('Job room auth error:', err);
+      });
+      if (job) {
+        const isPoster = String(job.posterId) === socketUserId;
+        const acceptedApp = job.applications?.find(a => a.id === job.acceptedApplicationId);
+        const isProvider = acceptedApp && String(acceptedApp.applicantId) === socketUserId;
+        isAuthorized = isPoster || isProvider;
       }
+    } catch (err) {
+      console.error('Job room auth error:', err);
     }
 
     if (!isAuthorized) {
@@ -1009,31 +748,20 @@ io.on('connection', (socket) => {
     console.log(`User ${socketUserId} joined job room ${room}`);
 
     // Cache job data on first join to avoid DB queries on every GPS tick
-    if (mongoConnected && Job && !jobLocations.has(jobId)) {
-      try {
-        const job = await Job.findById(jobId)
-          .select('posterId status location acceptedApplicationId applications')
-          .lean();
-        if (job) {
-          const acceptedApp = job.applications?.find(
-            a => String(a._id) === String(job.acceptedApplicationId)
-          );
-          jobLocations.set(jobId, {
-            locations: {},
-            nearbyNotified: false,
-            jobData: {
-              posterId: String(job.posterId),
-              providerId: acceptedApp ? String(acceptedApp.applicantId) : null,
-              status: job.status,
-              lat: job.location?.lat,
-              lng: job.location?.lng,
-              cachedAt: Date.now()
-            }
-          });
+    if (job && !jobLocations.has(jobId)) {
+      const acceptedApp = job.applications?.find(a => a.id === job.acceptedApplicationId);
+      jobLocations.set(jobId, {
+        locations: {},
+        nearbyNotified: false,
+        jobData: {
+          posterId: String(job.posterId),
+          providerId: acceptedApp ? String(acceptedApp.applicantId) : null,
+          status: job.status,
+          lat: job.lat,
+          lng: job.lng,
+          cachedAt: Date.now()
         }
-      } catch (err) {
-        console.error('Job cache error on join:', err);
-      }
+      });
     }
   });
 
@@ -1043,7 +771,6 @@ io.on('connection', (socket) => {
     socket.jobRoom = null;
     console.log(`User left job room ${room}`);
 
-    // Clean up cache if room is empty
     const roomSockets = io.sockets.adapter.rooms.get(room);
     if (!roomSockets || roomSockets.size === 0) {
       jobLocations.delete(jobId);
@@ -1055,24 +782,21 @@ io.on('connection', (socket) => {
     if (!socket.userId || !jobId || lat == null || lng == null) return;
     const userId = String(socket.userId);
 
-    // Initialize job tracking
     if (!jobLocations.has(jobId)) {
       jobLocations.set(jobId, { locations: {}, nearbyNotified: false });
     }
     const jobTrack = jobLocations.get(jobId);
     jobTrack.locations[userId] = { lat, lng, updatedAt: new Date() };
 
-    // Broadcast to room
     const room = `job_${jobId}`;
     socket.to(room).emit('job_location_update', { userId, lat, lng, updatedAt: new Date() });
 
     // GPS proximity check — uses cached job data; refreshes status every 30s
-    if (mongoConnected && Job && jobTrack.jobData) {
+    if (jobTrack.jobData) {
       try {
         const now = Date.now();
-        // Lightweight status refresh every 30 seconds to catch QR handshake starts
         if (now - jobTrack.jobData.cachedAt > 30000) {
-          const fresh = await Job.findById(jobId).select('status').lean();
+          const fresh = await prisma.job.findUnique({ where: { id: jobId }, select: { status: true } });
           if (fresh) {
             jobTrack.jobData.status = fresh.status;
             jobTrack.jobData.cachedAt = now;
@@ -1115,45 +839,43 @@ io.on('connection', (socket) => {
     console.log('Client disconnected:', socket.id);
     if (socket.userId) {
       onlineUsers.delete(socket.userId);
-      if (mongoConnected && User) {
-        try {
-          await User.findByIdAndUpdate(socket.userId, { isOnline: false, lastActive: new Date() });
-        } catch (err) {
-          console.error('disconnect DB error:', err.message);
-        }
+      try {
+        await prisma.user.update({ where: { id: socket.userId }, data: { isOnline: false, lastActive: new Date() } });
+      } catch (err) {
+        console.error('disconnect DB error:', err.message);
       }
       socket.broadcast.emit('user_status_changed', { userId: socket.userId, isOnline: false });
     }
   });
-
 });
-
-
 
 // ── Expire stale jobs ──
 // Every job is live for 24h from its publish time. Jobs that reach expiry
 // while still un-started (open/negotiating/approved) are flipped to 'expired'
-// and the poster is nudged to repost. Started jobs (accepted/in_progress/…) are
-// never auto-expired. The browse query already hides past-expiry jobs, so this
-// is about status hygiene + notifying the poster, not visibility.
+// and the poster is nudged to repost.
 async function sweepExpiredJobs() {
-  if (!mongoConnected || !Job) return;
+  if (!dbConnected) return;
   try {
     const now = new Date();
-    const stale = await Job.find({
-      status: { $in: ['open', 'negotiating', 'approved'] },
-      expiresAt: { $lt: now }
-    }).select('_id posterId title');
+    const stale = await prisma.job.findMany({
+      where: {
+        status: { in: ['open', 'negotiating', 'approved'] },
+        expiresAt: { lt: now }
+      },
+      select: { id: true, posterId: true, title: true }
+    });
     if (stale.length === 0) return;
-    const ids = stale.map(j => j._id);
-    await Job.updateMany({ _id: { $in: ids } }, { $set: { status: 'expired' } });
+    await prisma.job.updateMany({
+      where: { id: { in: stale.map(j => j.id) } },
+      data: { status: 'expired' }
+    });
     const notifier = require('./utils/notifications');
     for (const j of stale) {
       notifier.sendNotification(io, onlineUsers, j.posterId, {
         type: 'job_expired',
         title: 'Job Expired',
         message: `"${j.title}" reached its 24-hour limit with no accepted helper. Repost it to try again.`,
-        jobId: j._id
+        jobId: j.id
       }).catch(() => {});
     }
     console.log(`Expired ${stale.length} stale job(s)`);
@@ -1161,23 +883,12 @@ async function sweepExpiredJobs() {
     console.error('Job sweep error:', err.message);
   }
 }
-// Run shortly after boot, then every 15 minutes.
 setTimeout(sweepExpiredJobs, 30 * 1000);
 setInterval(sweepExpiredJobs, 15 * 60 * 1000);
 
 httpServer.listen(PORT, () => {
-
   console.log('========================================');
-
   console.log('Sebenza Server running on port', PORT);
-
-  console.log('Mode:', mongoConnected ? 'MONGODB' : 'DEMO (In-Memory)');
-
-  console.log('Features: Auth, Services, Transactions, Image Upload');
-
+  console.log('Database: Postgres (Supabase) via Prisma');
   console.log('========================================');
-
-  logRoutes();
-
 });
-

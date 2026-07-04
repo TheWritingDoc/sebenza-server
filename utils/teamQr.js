@@ -31,7 +31,9 @@ function parseQrPayload(raw) {
     const parts = str.split(':');
     if (parts.length !== 3) return null;
     const [, teamId, code] = parts;
-    if (!/^[a-f0-9]{24}$/i.test(teamId) || !code) return null;
+    // Team ids are UUIDs (Postgres); reject anything else.
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(teamId);
+    if (!isUuid || !code) return null;
     return { teamId, code: code.toUpperCase() };
   }
   // Bare code typed by hand (team resolved from the member's own team)

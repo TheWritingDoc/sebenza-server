@@ -1,4 +1,4 @@
-const Notification = require('../models/Notification');
+const { prisma } = require('../db');
 
 /**
  * Send a notification to a user (persist + emit if online).
@@ -6,28 +6,28 @@ const Notification = require('../models/Notification');
  * @param {Map} onlineUsers - Map<userId, socketId>
  * @param {string} userId - Target user ID
  * @param {Object} payload - { type, title, message, jobId?, data? }
- * @returns {Promise<Notification>}
  */
 async function sendNotification(io, onlineUsers, userId, payload) {
   try {
-    const notif = new Notification({
-      userId,
-      type: payload.type,
-      title: payload.title,
-      message: payload.message,
-      jobId: payload.jobId || null,
-      data: payload.data || null
+    const notif = await prisma.notification.create({
+      data: {
+        userId: String(userId),
+        type: payload.type,
+        title: payload.title,
+        message: payload.message,
+        jobId: payload.jobId ? String(payload.jobId) : null,
+        data: payload.data || undefined
+      }
     });
-    await notif.save();
 
     const sid = onlineUsers?.get(String(userId));
     if (io && sid) {
       io.to(sid).emit('notification', {
-        _id: String(notif._id),
+        _id: notif.id,
         type: notif.type,
         title: notif.title,
         message: notif.message,
-        jobId: notif.jobId ? String(notif.jobId) : null,
+        jobId: notif.jobId || null,
         data: notif.data,
         createdAt: notif.createdAt,
         read: false,

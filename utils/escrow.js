@@ -1,167 +1,185 @@
-const Transaction = require('../models/Transaction');
-const User = require('../models/User');
+const { prisma } = require('../db');
 
 /**
- * Create an escrow transaction for a job.
- * Deducts poster balance, holds in escrow, creates Transaction record.
- * @param {Object} job - Job document
- * @param {Object} acceptedApp - Accepted application subdocument
- * @param {number} finalAmount - Final agreed amount
- * @returns {Promise<Object>} Created transaction document
- * @throws {Error} If insufficient balance or save fails
+ * Escrow engine on Postgres. Every money movement runs inside a single
+ * ACID transaction; idempotency guards are conditional updateMany calls whose
+ * affected-row count decides whether the caller proceeds (only one concurrent
+ * caller can win the guard update).
+ */
+
+const num = (v) => Number(v || 0);
+const idOf = (obj) => obj?.id || obj?._id;
+
+/**
+ * Create an escrow transaction for a job. Deducts poster balance into escrow
+ * and creates the Transaction row. Idempotent per job.
  */
 async function createEscrowTransaction(job, acceptedApp, finalAmount, transactionStatus = 'in_progress') {
-  // Idempotency: check if transaction already exists for this job
-  const existingTx = await Transaction.findOne({
-    jobId: job._id,
-    status: { $in: ['in_progress', 'completed'] }
-  });
-  if (existingTx) {
-    return existingTx;
-  }
+  return prisma.$transaction(async (tx) => {
+    const existingTx = await tx.transaction.findFirst({
+      where: { jobId: idOf(job), status: { in: ['in_progress', 'completed'] } }
+    });
+    if (existingTx) return existingTx;
 
-  const poster = await User.findById(job.posterId);
-  if (!poster) throw new Error('Poster not found');
-
-  if (job.paymentMethod === 'escrow') {
-    if ((poster.randBalance || 0) < finalAmount) {
-      const err = new Error(`Insufficient balance: R${finalAmount} needed to fund escrow, poster has R${poster.randBalance || 0}`);
-      err.code = 'INSUFFICIENT_BALANCE';
-      throw err;
+    if (job.paymentMethod === 'escrow') {
+      // Atomic funds check + move: only succeeds if the poster can cover it.
+      const funded = await tx.user.updateMany({
+        where: { id: job.posterId, randBalance: { gte: finalAmount } },
+        data: {
+          randBalance: { decrement: finalAmount },
+          escrowRand: { increment: finalAmount }
+        }
+      });
+      if (funded.count === 0) {
+        const poster = await tx.user.findUnique({ where: { id: job.posterId }, select: { randBalance: true } });
+        const err = new Error(`Insufficient balance: R${finalAmount} needed to fund escrow, poster has R${num(poster?.randBalance)}`);
+        err.code = 'INSUFFICIENT_BALANCE';
+        throw err;
+      }
     }
-    poster.randBalance = (poster.randBalance || 0) - finalAmount;
-    poster.escrowRand = (poster.escrowRand || 0) + finalAmount;
-    await poster.save();
-  }
 
-  const transaction = new Transaction({
-    requesterId: job.posterId,
-    providerId: acceptedApp.applicantId,
-    jobId: job._id,
-    serviceId: null,
-    randAmount: finalAmount,
-    paymentMethod: job.paymentMethod,
-    escrowStatus: job.paymentMethod === 'cash' ? 'none' : 'held',
-    jobDescriptionImages: job.images || [],
-    location: job.location,
-    negotiatedAmount: finalAmount,
-    status: transactionStatus
+    return tx.transaction.create({
+      data: {
+        requesterId: job.posterId,
+        providerId: acceptedApp.applicantId,
+        jobId: idOf(job),
+        serviceId: null,
+        randAmount: finalAmount,
+        paymentMethod: job.paymentMethod,
+        escrowStatus: job.paymentMethod === 'cash' ? 'none' : 'held',
+        jobDescriptionImages: job.images || [],
+        lat: job.lat ?? job.location?.lat ?? null,
+        lng: job.lng ?? job.location?.lng ?? null,
+        negotiatedAmount: finalAmount,
+        status: transactionStatus
+      }
+    });
   });
-  await transaction.save();
-
-  return transaction;
 }
 
 /**
- * Release escrow funds to provider on job completion.
- * @param {Object} transaction - Transaction document
- * @returns {Promise<void>}
+ * Release remaining escrow funds to the provider on completion. Idempotent:
+ * the guard update only matches while escrow is still held.
  */
 async function releaseEscrow(transaction) {
   if (!transaction || transaction.paymentMethod !== 'escrow') return;
 
-  // Idempotency: if funds were already fully released, do nothing. Prevents
-  // a second handshake/confirmation from double-crediting the provider.
-  if (transaction.escrowStatus === 'released' || transaction.status === 'completed') {
-    return;
-  }
+  await prisma.$transaction(async (tx) => {
+    const guard = await tx.transaction.updateMany({
+      where: { id: idOf(transaction), paymentMethod: 'escrow', escrowStatus: 'held' },
+      data: { status: 'completed', escrowStatus: 'released', completedAt: new Date() }
+    });
+    if (guard.count === 0) return; // already released/refunded — nothing to move
 
-  // If partial release was done, only release the remaining amount. Clamp to
-  // [0, randAmount] so a corrupted partialReleaseAmount can never produce a
-  // negative (double-pay) or over-sized release.
-  const alreadyReleased = Math.min(Math.max(transaction.partialReleaseAmount || 0, 0), transaction.randAmount || 0);
-  const remainingAmount = Math.max(0, (transaction.randAmount || 0) - alreadyReleased);
+    const t = await tx.transaction.findUnique({ where: { id: idOf(transaction) } });
+    // Any partial amount already paid stays with the provider; clamp so a
+    // corrupted partialReleaseAmount can never double-pay.
+    const alreadyReleased = Math.min(Math.max(num(t.partialReleaseAmount), 0), num(t.randAmount));
+    const remainingAmount = Math.max(0, num(t.randAmount) - alreadyReleased);
+    if (remainingAmount === 0) return;
 
-  transaction.status = 'completed';
-  transaction.escrowStatus = 'released';
-  await transaction.save();
-
-  // Deduct remaining from poster's escrow holding
-  const posterUser = await User.findById(transaction.requesterId);
-  if (posterUser) {
-    posterUser.escrowRand = Math.max(0, (posterUser.escrowRand || 0) - remainingAmount);
-    await posterUser.save();
-  }
-
-  // Credit remaining to provider's balance
-  const providerUser = await User.findById(transaction.providerId);
-  if (providerUser) {
-    providerUser.randBalance = (providerUser.randBalance || 0) + remainingAmount;
-    providerUser.totalEarnedRand = (providerUser.totalEarnedRand || 0) + remainingAmount;
-    await providerUser.save();
-  }
+    await tx.user.update({
+      where: { id: t.requesterId },
+      data: { escrowRand: { decrement: remainingAmount } }
+    });
+    await tx.user.update({
+      where: { id: t.providerId },
+      data: {
+        randBalance: { increment: remainingAmount },
+        totalEarnedRand: { increment: remainingAmount }
+      }
+    });
+    // Never let a rounding edge push escrow negative.
+    await tx.user.updateMany({
+      where: { id: t.requesterId, escrowRand: { lt: 0 } },
+      data: { escrowRand: 0 }
+    });
+  });
 }
 
 /**
- * Partially release escrow funds (up to 50%) to provider after handshake.
- * Only allowed once per transaction, only by the job poster.
- * @param {Object} transaction - Transaction document
- * @param {number} percentage - Percentage to release (default 50, max 50)
- * @param {string} releasedBy - User ID who authorized the release
- * @returns {Promise<Object>} Updated transaction
+ * Partially release escrow funds (max 50%) to the provider after handshake.
+ * Only once per transaction.
  */
 async function partialReleaseEscrow(transaction, percentage = 50, releasedBy = null) {
   if (!transaction || transaction.paymentMethod !== 'escrow') {
     throw new Error('Not an escrow transaction');
   }
-  if (transaction.escrowStatus !== 'held') {
-    throw new Error('Escrow is not in held status');
-  }
-  if (transaction.partialReleaseAmount > 0) {
-    throw new Error('Partial release already done for this transaction');
-  }
 
-  // Cap at 50%
   const cappedPercentage = Math.min(Math.max(percentage, 1), 50);
-  const partialAmount = Math.round((transaction.randAmount * cappedPercentage) / 100);
+  const partialAmount = Math.round((num(transaction.randAmount) * cappedPercentage) / 100);
 
-  transaction.partialReleaseAmount = partialAmount;
-  transaction.partialReleasedAt = new Date();
-  transaction.partialReleasedBy = releasedBy;
-  await transaction.save();
+  return prisma.$transaction(async (tx) => {
+    const guard = await tx.transaction.updateMany({
+      where: {
+        id: idOf(transaction),
+        paymentMethod: 'escrow',
+        escrowStatus: 'held',
+        partialReleaseAmount: 0
+      },
+      data: {
+        partialReleaseAmount: partialAmount,
+        partialReleasedAt: new Date(),
+        partialReleasedBy: releasedBy
+      }
+    });
+    if (guard.count === 0) {
+      const t = await tx.transaction.findUnique({ where: { id: idOf(transaction) }, select: { escrowStatus: true, partialReleaseAmount: true } });
+      if (t && num(t.partialReleaseAmount) > 0) throw new Error('Partial release already done for this transaction');
+      throw new Error('Escrow is not in held status');
+    }
 
-  // Transfer partial amount from poster's escrow to provider's balance
-  const posterUser = await User.findById(transaction.requesterId);
-  if (posterUser) {
-    posterUser.escrowRand = Math.max(0, (posterUser.escrowRand || 0) - partialAmount);
-    await posterUser.save();
-  }
+    await tx.user.update({
+      where: { id: transaction.requesterId },
+      data: { escrowRand: { decrement: partialAmount } }
+    });
+    await tx.user.update({
+      where: { id: transaction.providerId },
+      data: {
+        randBalance: { increment: partialAmount },
+        totalEarnedRand: { increment: partialAmount }
+      }
+    });
+    await tx.user.updateMany({
+      where: { id: transaction.requesterId, escrowRand: { lt: 0 } },
+      data: { escrowRand: 0 }
+    });
 
-  const providerUser = await User.findById(transaction.providerId);
-  if (providerUser) {
-    providerUser.randBalance = (providerUser.randBalance || 0) + partialAmount;
-    providerUser.totalEarnedRand = (providerUser.totalEarnedRand || 0) + partialAmount;
-    await providerUser.save();
-  }
-
-  return transaction;
+    return tx.transaction.findUnique({ where: { id: idOf(transaction) } });
+  });
 }
 
 /**
- * Refund held escrow funds back to the poster (job cancelled/stopped).
- * Idempotent: does nothing if funds were already released or refunded.
- * Any partial amount already released to the provider stays with them;
- * only the remaining held portion returns to the poster.
- * @param {Object} transaction - Transaction document
- * @returns {Promise<void>}
+ * Refund held escrow back to the poster (job cancelled/stopped). Idempotent.
+ * Any partial amount already released to the provider stays with them.
  */
 async function refundEscrow(transaction) {
   if (!transaction || transaction.paymentMethod !== 'escrow') return;
-  if (transaction.escrowStatus !== 'held') return; // already released/refunded/none
 
-  const alreadyReleased = Math.min(Math.max(transaction.partialReleaseAmount || 0, 0), transaction.randAmount || 0);
-  const remainingAmount = Math.max(0, (transaction.randAmount || 0) - alreadyReleased);
+  await prisma.$transaction(async (tx) => {
+    const guard = await tx.transaction.updateMany({
+      where: { id: idOf(transaction), paymentMethod: 'escrow', escrowStatus: 'held' },
+      data: { status: 'cancelled', escrowStatus: 'refunded' }
+    });
+    if (guard.count === 0) return;
 
-  transaction.status = 'cancelled';
-  transaction.escrowStatus = 'refunded';
-  await transaction.save();
+    const t = await tx.transaction.findUnique({ where: { id: idOf(transaction) } });
+    const alreadyReleased = Math.min(Math.max(num(t.partialReleaseAmount), 0), num(t.randAmount));
+    const remainingAmount = Math.max(0, num(t.randAmount) - alreadyReleased);
+    if (remainingAmount === 0) return;
 
-  const posterUser = await User.findById(transaction.requesterId);
-  if (posterUser) {
-    posterUser.escrowRand = Math.max(0, (posterUser.escrowRand || 0) - remainingAmount);
-    posterUser.randBalance = (posterUser.randBalance || 0) + remainingAmount;
-    await posterUser.save();
-  }
+    await tx.user.update({
+      where: { id: t.requesterId },
+      data: {
+        escrowRand: { decrement: remainingAmount },
+        randBalance: { increment: remainingAmount }
+      }
+    });
+    await tx.user.updateMany({
+      where: { id: t.requesterId, escrowRand: { lt: 0 } },
+      data: { escrowRand: 0 }
+    });
+  });
 }
 
 module.exports = { createEscrowTransaction, releaseEscrow, partialReleaseEscrow, refundEscrow };

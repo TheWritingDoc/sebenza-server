@@ -1,7 +1,8 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
-const SMSVerification = require('../models/SMSVerification');
+const { prisma } = require('../db');
+const { toDTO, sanitizeUser, isId } = require('../utils/dto');
 const jwt = require('jsonwebtoken');
 
 // In production, use Twilio. For demo, we'll simulate SMS.
@@ -61,22 +62,23 @@ router.post(['/send', '/send-code'], auth, smsSendLimiter, async (req, res) => {
 
     // Generate code
     const code = generateCode();
-    
+
     // Delete any existing codes for this user/phone
-    await SMSVerification.deleteMany({ userId: req.userId, phone });
-    
+    await prisma.smsVerification.deleteMany({ where: { userId: req.userId, phone } });
+
     // Save new code (expires in 10 minutes)
-    const sms = new SMSVerification({
-      userId: req.userId,
-      phone,
-      code,
-      expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+    await prisma.smsVerification.create({
+      data: {
+        userId: req.userId,
+        phone,
+        code,
+        expiresAt: new Date(Date.now() + 10 * 60 * 1000)
+      }
     });
-    await sms.save();
 
     // In production, send real SMS via Twilio. In demo mode, log to console only.
     const isDemo = !process.env.TWILIO_SID;
-    
+
     if (isDemo) {
       console.log('Demo mode - SMS code:', code);
       res.json({
@@ -111,29 +113,35 @@ router.post(['/verify', '/verify-code'], auth, smsVerifyLimiter, async (req, res
       return res.status(400).json({ error: 'Invalid code format' });
     }
 
-    const sms = await SMSVerification.findOne({
-      userId: req.userId,
-      phone,
-      code: safeCode,
-      verified: false,
-      expiresAt: { $gt: new Date() }
+    const sms = await prisma.smsVerification.findFirst({
+      where: {
+        userId: req.userId,
+        phone,
+        code: safeCode,
+        verified: false,
+        expiresAt: { gt: new Date() }
+      }
     });
 
     if (!sms) {
       return res.status(400).json({ error: 'Invalid or expired code' });
     }
 
-    sms.verified = true;
-    await sms.save();
+    await prisma.smsVerification.update({
+      where: { id: sms.id },
+      data: { verified: true }
+    });
     // Delete the code once verified to prevent reuse
-    await SMSVerification.deleteMany({ userId: req.userId, phone });
+    await prisma.smsVerification.deleteMany({ where: { userId: req.userId, phone } });
 
     // Update user phone verified status and refresh identity trust stars
-    const User = require('../models/User');
-    await User.findByIdAndUpdate(req.userId, { phoneVerified: true, phone });
+    await prisma.user.update({
+      where: { id: req.userId },
+      data: { phoneVerified: true, phone }
+    });
     try {
       const { refreshTrust } = require('../utils/trustScore');
-      await refreshTrust(User, req.userId);
+      await refreshTrust(prisma, req.userId);
     } catch (e) { console.error('Trust refresh (phone) failed:', e.message); }
 
     res.json({ message: 'Phone verified successfully' });

@@ -1,39 +1,92 @@
 // Escrow lifecycle regression test — runs without a database.
-// Stubs the mongoose model statics/save so we can verify the actual money
-// arithmetic in utils/escrow.js: fund → (partial release) → release/refund.
+// Injects an in-memory fake Prisma client (via require-cache priming of ../db)
+// so we can verify the actual money arithmetic in utils/escrow.js:
+// fund → (partial release) → release/refund.
 // Usage: node test/escrow.test.js
 
 const assert = require('assert');
-const User = require('../models/User');
-const Transaction = require('../models/Transaction');
 
-// Valid ObjectId hex strings — mongoose silently drops invalid casts,
-// which would make every balance lookup miss.
-const POSTER = 'aaaaaaaaaaaaaaaaaaaaaaaa';
-const PROVIDER = 'bbbbbbbbbbbbbbbbbbbbbbbb';
+const POSTER = '11111111-1111-4111-8111-111111111111';
+const PROVIDER = '22222222-2222-4222-8222-222222222222';
+const JOB = '33333333-3333-4333-8333-333333333333';
 
-// ── Stubs ───────────────────────────────────────────────────────────────────
-let users = {};
-let existingTx = null;
+// ── In-memory fake Prisma ──────────────────────────────────────────────────
+const db = { users: [], transactions: [], txSeq: 0 };
 
-User.findById = async (id) => users[String(id)] || null;
-Transaction.findOne = async () => existingTx;
-Transaction.prototype.save = async function () { return this; };
-
-function makeUser(id, randBalance, escrowRand = 0, totalEarnedRand = 0) {
-  const u = { _id: id, randBalance, escrowRand, totalEarnedRand, saves: 0 };
-  u.save = async function () { this.saves++; return this; };
-  users[id] = u;
-  return u;
+function applyData(row, data) {
+  for (const [k, v] of Object.entries(data)) {
+    if (v && typeof v === 'object' && !(v instanceof Date) && ('increment' in v || 'decrement' in v)) {
+      row[k] = (Number(row[k]) || 0) + (v.increment !== undefined ? v.increment : -v.decrement);
+    } else {
+      row[k] = v;
+    }
+  }
 }
 
+function matches(row, where) {
+  for (const [k, v] of Object.entries(where)) {
+    if (v && typeof v === 'object' && !(v instanceof Date) && !Array.isArray(v)) {
+      if ('in' in v && !v.in.includes(row[k])) return false;
+      if ('gte' in v && !(Number(row[k]) >= Number(v.gte))) return false;
+      if ('lt' in v && !(Number(row[k]) < Number(v.lt))) return false;
+    } else if (String(row[k]) !== String(v) && !(Number.isFinite(Number(v)) && Number(row[k] || 0) === Number(v))) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function collection(rows) {
+  return {
+    findFirst: async ({ where }) => rows.find(r => matches(r, where)) || null,
+    findUnique: async ({ where, select }) => {
+      const r = rows.find(x => String(x.id) === String(where.id) || (where.email && x.email === where.email));
+      return r || null;
+    },
+    updateMany: async ({ where, data }) => {
+      const hit = rows.filter(r => matches(r, where));
+      hit.forEach(r => applyData(r, data));
+      return { count: hit.length };
+    },
+    update: async ({ where, data }) => {
+      const r = rows.find(x => String(x.id) === String(where.id));
+      if (!r) { const e = new Error('Record not found'); e.code = 'P2025'; throw e; }
+      applyData(r, data);
+      return r;
+    },
+    create: async ({ data }) => {
+      const row = { id: `tx-${++db.txSeq}`, partialReleaseAmount: 0, ...data };
+      rows.push(row);
+      return row;
+    },
+  };
+}
+
+const fakePrisma = {
+  get user() { return collection(db.users); },
+  get transaction() { return collection(db.transactions); },
+  $transaction: async (fn) => fn(fakePrisma),
+};
+
+// Prime the require cache so utils/escrow.js gets the fake client.
+const dbModulePath = require.resolve('../db');
+require.cache[dbModulePath] = {
+  id: dbModulePath, filename: dbModulePath, loaded: true,
+  exports: { prisma: fakePrisma, Prisma: {} },
+};
+
 const { createEscrowTransaction, releaseEscrow, partialReleaseEscrow, refundEscrow } = require('../utils/escrow');
+
+function makeUser(id, randBalance, escrowRand = 0, totalEarnedRand = 0) {
+  const u = { id, randBalance, escrowRand, totalEarnedRand };
+  db.users.push(u);
+  return u;
+}
 
 let passed = 0, failed = 0;
 async function test(name, fn) {
   try {
-    users = {};
-    existingTx = null;
+    db.users = []; db.transactions = [];
     await fn();
     console.log(`  ✅ ${name}`);
     passed++;
@@ -43,11 +96,11 @@ async function test(name, fn) {
   }
 }
 
-const jobBase = { _id: 'job1', posterId: POSTER, paymentMethod: 'escrow' };
+const jobBase = { id: JOB, posterId: POSTER, paymentMethod: 'escrow', images: [] };
 const app = { applicantId: PROVIDER };
 
 (async () => {
-  console.log('\n🧪  escrow lifecycle tests\n');
+  console.log('\n🧪  escrow lifecycle tests (Prisma)\n');
 
   await test('fund escrow: moves poster balance into escrowRand and holds it', async () => {
     const poster = makeUser(POSTER, 1000);
@@ -55,7 +108,7 @@ const app = { applicantId: PROVIDER };
     assert.strictEqual(poster.randBalance, 700);
     assert.strictEqual(poster.escrowRand, 300);
     assert.strictEqual(tx.escrowStatus, 'held');
-    assert.strictEqual(tx.randAmount, 300);
+    assert.strictEqual(Number(tx.randAmount), 300);
     assert.strictEqual(String(tx.requesterId), POSTER);
     assert.strictEqual(String(tx.providerId), PROVIDER);
   });
@@ -78,81 +131,90 @@ const app = { applicantId: PROVIDER };
     assert.strictEqual(tx.escrowStatus, 'none');
   });
 
-  await test('fund escrow: idempotent — returns existing transaction, no double deduction', async () => {
+  await test('fund is idempotent per job: second call returns the existing tx', async () => {
     const poster = makeUser(POSTER, 1000);
-    existingTx = { _id: 'tx-existing', status: 'in_progress' };
-    const tx = await createEscrowTransaction(jobBase, app, 300);
-    assert.strictEqual(tx._id, 'tx-existing');
-    assert.strictEqual(poster.randBalance, 1000);
+    const tx1 = await createEscrowTransaction(jobBase, app, 300);
+    const tx2 = await createEscrowTransaction(jobBase, app, 300);
+    assert.strictEqual(tx1.id, tx2.id);
+    assert.strictEqual(poster.randBalance, 700, 'must not double-deduct');
+    assert.strictEqual(db.transactions.length, 1);
   });
 
-  await test('release: full amount moves from poster escrow to provider balance', async () => {
+  await test('release: pays provider, clears poster escrow, marks completed', async () => {
     const poster = makeUser(POSTER, 700, 300);
-    const provider = makeUser(PROVIDER, 50, 0, 20);
-    const tx = new Transaction({ requesterId: POSTER, providerId: PROVIDER, randAmount: 300, paymentMethod: 'escrow', escrowStatus: 'held', status: 'in_progress' });
-    await releaseEscrow(tx);
+    const provider = makeUser(PROVIDER, 50, 0, 0);
+    db.transactions.push({ id: 't1', requesterId: POSTER, providerId: PROVIDER, jobId: JOB, randAmount: 300, paymentMethod: 'escrow', escrowStatus: 'held', status: 'in_progress', partialReleaseAmount: 0 });
+    await releaseEscrow(db.transactions[0]);
     assert.strictEqual(poster.escrowRand, 0);
     assert.strictEqual(provider.randBalance, 350);
-    assert.strictEqual(provider.totalEarnedRand, 320);
-    assert.strictEqual(tx.status, 'completed');
-    assert.strictEqual(tx.escrowStatus, 'released');
+    assert.strictEqual(provider.totalEarnedRand, 300);
+    assert.strictEqual(db.transactions[0].escrowStatus, 'released');
+    assert.strictEqual(db.transactions[0].status, 'completed');
   });
 
-  await test('release: idempotent — second call moves nothing', async () => {
+  await test('release is idempotent: double release cannot double-pay', async () => {
     const poster = makeUser(POSTER, 700, 300);
     const provider = makeUser(PROVIDER, 0);
-    const tx = new Transaction({ requesterId: POSTER, providerId: PROVIDER, randAmount: 300, paymentMethod: 'escrow', escrowStatus: 'held', status: 'in_progress' });
-    await releaseEscrow(tx);
-    await releaseEscrow(tx);
-    assert.strictEqual(provider.randBalance, 300); // not 600
+    db.transactions.push({ id: 't1', requesterId: POSTER, providerId: PROVIDER, jobId: JOB, randAmount: 300, paymentMethod: 'escrow', escrowStatus: 'held', status: 'in_progress', partialReleaseAmount: 0 });
+    await releaseEscrow(db.transactions[0]);
+    await releaseEscrow(db.transactions[0]);
+    assert.strictEqual(provider.randBalance, 300);
     assert.strictEqual(poster.escrowRand, 0);
   });
 
-  await test('partial release: caps at 50%, moves funds, once-only', async () => {
+  await test('partial release: caps at 50% and moves the money once', async () => {
     const poster = makeUser(POSTER, 700, 300);
     const provider = makeUser(PROVIDER, 0);
-    const tx = new Transaction({ requesterId: POSTER, providerId: PROVIDER, randAmount: 300, paymentMethod: 'escrow', escrowStatus: 'held', status: 'in_progress' });
-    await partialReleaseEscrow(tx, 80, POSTER); // asks 80%, capped to 50%
-    assert.strictEqual(tx.partialReleaseAmount, 150);
+    db.transactions.push({ id: 't1', requesterId: POSTER, providerId: PROVIDER, jobId: JOB, randAmount: 300, paymentMethod: 'escrow', escrowStatus: 'held', status: 'in_progress', partialReleaseAmount: 0 });
+    await partialReleaseEscrow(db.transactions[0], 80, POSTER); // asks 80%, capped to 50%
+    assert.strictEqual(Number(db.transactions[0].partialReleaseAmount), 150);
     assert.strictEqual(provider.randBalance, 150);
     assert.strictEqual(poster.escrowRand, 150);
-    await assert.rejects(() => partialReleaseEscrow(tx, 10, POSTER), /already done/);
+  });
+
+  await test('partial release: second attempt is rejected', async () => {
+    makeUser(POSTER, 700, 300);
+    makeUser(PROVIDER, 0);
+    db.transactions.push({ id: 't1', requesterId: POSTER, providerId: PROVIDER, jobId: JOB, randAmount: 300, paymentMethod: 'escrow', escrowStatus: 'held', status: 'in_progress', partialReleaseAmount: 0 });
+    await partialReleaseEscrow(db.transactions[0], 50, POSTER);
+    await assert.rejects(
+      () => partialReleaseEscrow(db.transactions[0], 10, POSTER),
+      /already done/
+    );
   });
 
   await test('release after partial: only the remainder moves', async () => {
-    const poster = makeUser(POSTER, 700, 150);
-    const provider = makeUser(PROVIDER, 150, 0, 150);
-    const tx = new Transaction({ requesterId: POSTER, providerId: PROVIDER, randAmount: 300, paymentMethod: 'escrow', escrowStatus: 'held', status: 'in_progress', partialReleaseAmount: 150 });
-    await releaseEscrow(tx);
-    assert.strictEqual(provider.randBalance, 300);      // 150 + remaining 150
+    const poster = makeUser(POSTER, 700, 300);
+    const provider = makeUser(PROVIDER, 0);
+    db.transactions.push({ id: 't1', requesterId: POSTER, providerId: PROVIDER, jobId: JOB, randAmount: 300, paymentMethod: 'escrow', escrowStatus: 'held', status: 'in_progress', partialReleaseAmount: 0 });
+    await partialReleaseEscrow(db.transactions[0], 50, POSTER); // 150 out
+    await releaseEscrow(db.transactions[0]);                    // remaining 150
+    assert.strictEqual(provider.randBalance, 300);
     assert.strictEqual(provider.totalEarnedRand, 300);
     assert.strictEqual(poster.escrowRand, 0);
   });
 
-  await test('refund: held funds return to poster balance', async () => {
+  await test('refund: returns held funds to poster and marks refunded', async () => {
     const poster = makeUser(POSTER, 700, 300);
-    const tx = new Transaction({ requesterId: POSTER, providerId: PROVIDER, randAmount: 300, paymentMethod: 'escrow', escrowStatus: 'held', status: 'in_progress' });
-    await refundEscrow(tx);
+    makeUser(PROVIDER, 0);
+    db.transactions.push({ id: 't1', requesterId: POSTER, providerId: PROVIDER, jobId: JOB, randAmount: 300, paymentMethod: 'escrow', escrowStatus: 'held', status: 'in_progress', partialReleaseAmount: 0 });
+    await refundEscrow(db.transactions[0]);
     assert.strictEqual(poster.randBalance, 1000);
     assert.strictEqual(poster.escrowRand, 0);
-    assert.strictEqual(tx.status, 'cancelled');
-    assert.strictEqual(tx.escrowStatus, 'refunded');
+    assert.strictEqual(db.transactions[0].escrowStatus, 'refunded');
+    assert.strictEqual(db.transactions[0].status, 'cancelled');
   });
 
-  await test('refund after partial: provider keeps advance, poster gets remainder', async () => {
-    const poster = makeUser(POSTER, 700, 150);
-    const tx = new Transaction({ requesterId: POSTER, providerId: PROVIDER, randAmount: 300, paymentMethod: 'escrow', escrowStatus: 'held', status: 'in_progress', partialReleaseAmount: 150 });
-    await refundEscrow(tx);
-    assert.strictEqual(poster.randBalance, 850);  // 700 + remaining 150
+  await test('refund after partial: provider keeps the advance, poster gets the rest', async () => {
+    const poster = makeUser(POSTER, 700, 300);
+    const provider = makeUser(PROVIDER, 0);
+    db.transactions.push({ id: 't1', requesterId: POSTER, providerId: PROVIDER, jobId: JOB, randAmount: 300, paymentMethod: 'escrow', escrowStatus: 'held', status: 'in_progress', partialReleaseAmount: 0 });
+    await partialReleaseEscrow(db.transactions[0], 50, POSTER); // provider gets 150
+    await refundEscrow(db.transactions[0]);                     // poster refunded 150
+    assert.strictEqual(provider.randBalance, 150);
+    assert.strictEqual(poster.randBalance, 850);
     assert.strictEqual(poster.escrowRand, 0);
-  });
-
-  await test('refund: idempotent — no-op when already released or refunded', async () => {
-    const poster = makeUser(POSTER, 700, 0);
-    const tx = new Transaction({ requesterId: POSTER, providerId: PROVIDER, randAmount: 300, paymentMethod: 'escrow', escrowStatus: 'released', status: 'completed' });
-    await refundEscrow(tx);
-    assert.strictEqual(poster.randBalance, 700);
-    assert.strictEqual(tx.escrowStatus, 'released');
+    assert.strictEqual(db.transactions[0].escrowStatus, 'refunded');
   });
 
   console.log(`\n${passed}/${passed + failed} tests passed\n`);

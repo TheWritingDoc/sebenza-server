@@ -1,48 +1,47 @@
 const multer = require('multer');
 const path = require('path');
-const { Readable } = require('stream');
-const cloudinary = require('cloudinary').v2;
 
-// Configure Cloudinary. In production these must be set or uploads are impossible.
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
-  secure: true
-});
+/**
+ * Uploads go to Supabase Storage (bucket `uploads` is public; `secure-docs`
+ * holds KYC/trust documents and is private — served via signed URLs).
+ * Falls back to local disk when SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY are
+ * missing so `npm run dev` works without credentials.
+ */
+const SUPABASE_URL = process.env.SUPABASE_URL || '';
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+const storageEnabled = !!(SUPABASE_URL && SERVICE_KEY);
 
 const isProd = process.env.NODE_ENV === 'production';
-const cloudinaryEnabled = !!(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
-
-if (isProd && !cloudinaryEnabled) {
-  console.warn('WARNING: Cloudinary credentials are not set in production. Uploads will fall back to local disk and will be lost on redeploy. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY and CLOUDINARY_API_SECRET to enable persistent uploads.');
+if (isProd && !storageEnabled) {
+  console.warn('WARNING: SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY are not set in production. Uploads will fall back to local disk and will be lost on redeploy.');
 }
 
-// Fallback disk storage for local development when Cloudinary is not configured.
-// This keeps `npm run dev` working without credentials, but production is protected
-// by the fail-fast check above.
+let supabase = null;
+if (storageEnabled) {
+  const { createClient } = require('@supabase/supabase-js');
+  supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
+}
+
+// KYC and identity documents live in the private bucket.
+const PRIVATE_FOLDERS = new Set(['trust', 'ids', 'selfies', 'kyc']);
+function bucketFor(folder) {
+  const root = String(folder || 'misc').split('/')[0];
+  return PRIVATE_FOLDERS.has(root) ? 'secure-docs' : 'uploads';
+}
+
+// ── Local-dev disk fallback ─────────────────────────────────────────────
 const UPLOADS_BASE = path.join(__dirname, '..', 'uploads');
 const fs = require('fs');
-if (!cloudinaryEnabled) {
-  const dirs = [
-    path.join(UPLOADS_BASE, 'proof'),
-    path.join(UPLOADS_BASE, 'ids'),
-    path.join(UPLOADS_BASE, 'selfies'),
-    path.join(UPLOADS_BASE, 'profiles'),
-    path.join(UPLOADS_BASE, 'services'),
-    path.join(UPLOADS_BASE, 'jobs'),
-    path.join(UPLOADS_BASE, 'trust'),
-    path.join(UPLOADS_BASE, 'misc')
-  ];
-  dirs.forEach(dir => {
+if (!storageEnabled) {
+  ['proof', 'ids', 'selfies', 'profiles', 'services', 'jobs', 'trust', 'misc'].forEach(d => {
+    const dir = path.join(UPLOADS_BASE, d);
     if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   });
 }
 
 const diskStorage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const folder = resolveFolder(file.fieldname);
-    cb(null, path.join(UPLOADS_BASE, folder));
+    cb(null, path.join(UPLOADS_BASE, resolveFolder(file.fieldname)));
   },
   filename: (req, file, cb) => {
     const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
@@ -60,21 +59,19 @@ const fileFilter = (req, file, cb) => {
   if (!allowedTypes.includes(file.mimetype)) {
     return cb(new Error(`Invalid file type: ${file.mimetype}. Only JPEG, PNG, and WebP images are allowed.`), false);
   }
-
   if (!allowedExtensions.includes(ext)) {
     return cb(new Error(`Invalid file extension: ${ext}. Only .jpg, .jpeg, .png, and .webp files are allowed.`), false);
   }
-
   cb(null, true);
 };
 
 const upload = multer({
-  storage: cloudinaryEnabled ? memoryStorage : diskStorage,
+  storage: storageEnabled ? memoryStorage : diskStorage,
   limits: {
     fileSize: 15 * 1024 * 1024, // 15MB per file
-    files: 10 // Max 10 files per upload
+    files: 10
   },
-  fileFilter: fileFilter
+  fileFilter
 });
 
 function resolveFolder(fieldname) {
@@ -88,33 +85,32 @@ function resolveFolder(fieldname) {
   return 'misc';
 }
 
-function uploadBuffer(buffer, options) {
-  return new Promise((resolve, reject) => {
-    const stream = cloudinary.uploader.upload_stream(options, (err, result) => {
-      if (err) return reject(err);
-      resolve(result);
-    });
-    Readable.from(buffer).pipe(stream);
-  });
-}
-
 async function uploadFile(file, folder) {
-  if (!cloudinaryEnabled) {
-    // Local fallback: return the same relative path shape the old code used.
+  if (!storageEnabled) {
     const folderPath = resolveFolder(file.fieldname);
     return `/uploads/${folderPath}/${file.filename}`;
   }
 
-  const result = await uploadBuffer(file.buffer, {
-    folder: `sebenza/${folder}`,
-    resource_type: 'image',
-    // Keep original filename as part of the public_id for easier debugging.
-    public_id: `${Date.now()}-${Math.round(Math.random() * 1E9)}-${path.parse(file.originalname).name}`.replace(/[^a-zA-Z0-9-_]/g, '-'),
-    // Moderate for inappropriate content on KYC and proof photos.
-    moderation: folder.startsWith('kyc') || folder === 'proof' ? 'aws_rek' : undefined
-  });
+  const bucket = bucketFor(folder);
+  const safeName = path.parse(file.originalname).name.replace(/[^a-zA-Z0-9-_]/g, '-');
+  const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
+  const objectPath = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}-${safeName}${ext}`;
 
-  return result.secure_url;
+  const { error } = await supabase.storage.from(bucket).upload(objectPath, file.buffer, {
+    contentType: file.mimetype,
+    upsert: false,
+  });
+  if (error) throw new Error(`Storage upload failed: ${error.message}`);
+
+  if (bucket === 'uploads') {
+    return supabase.storage.from(bucket).getPublicUrl(objectPath).data.publicUrl;
+  }
+  // Private documents: store a long-lived signed URL (1 year) — these are
+  // only ever surfaced to the owner and admins.
+  const { data, error: signErr } = await supabase.storage.from(bucket)
+    .createSignedUrl(objectPath, 60 * 60 * 24 * 365);
+  if (signErr) throw new Error(`Storage sign failed: ${signErr.message}`);
+  return data.signedUrl;
 }
 
 async function uploadFiles(files, folder) {
@@ -125,5 +121,5 @@ async function uploadFiles(files, folder) {
 module.exports = upload;
 module.exports.uploadFile = uploadFile;
 module.exports.uploadFiles = uploadFiles;
-module.exports.cloudinaryEnabled = cloudinaryEnabled;
+module.exports.storageEnabled = storageEnabled;
 module.exports.resolveFolder = resolveFolder;

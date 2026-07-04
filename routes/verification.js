@@ -1,10 +1,11 @@
-﻿const express = require('express');
+const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const upload = require('../middleware/upload');
 const { uploadFile } = require('../middleware/upload');
-const Verification = require('../models/Verification');
+const { prisma } = require('../db');
+const { toDTO, sanitizeUser, isId } = require('../utils/dto');
 const jwt = require('jsonwebtoken');
 
 // Middleware to verify JWT
@@ -31,8 +32,10 @@ const auth = (req, res, next) => {
 
 const requireAdmin = async (req, res, next) => {
   try {
-    const User = require('../models/User');
-    const user = await User.findById(req.userId).select('role');
+    const user = await prisma.user.findUnique({
+      where: { id: req.userId },
+      select: { id: true, role: true }
+    });
     if (!user || user.role !== 'admin') {
       return res.status(403).json({ error: 'Admin access required' });
     }
@@ -53,7 +56,7 @@ router.post('/upload', auth, upload.fields([
       return res.status(400).json({ error: 'All three files required: idFront, idBack, selfie' });
     }
 
-    const existing = await Verification.findOne({ userId: req.userId });
+    const existing = await prisma.verification.findFirst({ where: { userId: req.userId } });
     if (existing) {
       return res.status(400).json({ error: 'Verification already submitted' });
     }
@@ -64,19 +67,19 @@ router.post('/upload', auth, upload.fields([
       uploadFile(req.files.selfie[0], 'kyc/selfies')
     ]);
 
-    const verification = new Verification({
-      userId: req.userId,
-      idFront: idFrontUrl,
-      idBack: idBackUrl,
-      selfie: selfieUrl,
-      idNumber: req.body.idNumber || null
+    const verification = await prisma.verification.create({
+      data: {
+        userId: req.userId,
+        idFront: idFrontUrl,
+        idBack: idBackUrl,
+        selfie: selfieUrl,
+        idNumber: req.body.idNumber || null
+      }
     });
-
-    await verification.save();
 
     res.json({
       message: 'Documents uploaded successfully. Pending review.',
-      verificationId: verification._id
+      verificationId: verification.id
     });
   } catch (err) {
     console.error('Upload error:', err);
@@ -87,11 +90,11 @@ router.post('/upload', auth, upload.fields([
 // Get verification status
 router.get('/status', auth, async (req, res) => {
   try {
-    const verification = await Verification.findOne({ userId: req.userId });
+    const verification = await prisma.verification.findFirst({ where: { userId: req.userId } });
     if (!verification) {
       return res.json({ status: 'not_submitted' });
     }
-    
+
     res.json({
       status: verification.verified ? 'verified' : 'pending',
       submittedAt: verification.submittedAt,
@@ -105,22 +108,27 @@ router.get('/status', auth, async (req, res) => {
 // Admin: Verify user
 router.post('/approve/:userId', auth, requireAdmin, async (req, res) => {
   try {
-    const verification = await Verification.findOneAndUpdate(
-      { userId: req.params.userId },
-      { verified: true, verifiedAt: new Date() },
-      { new: true }
-    );
+    if (!isId(req.params.userId)) {
+      return res.status(404).json({ error: 'Verification not found' });
+    }
 
-    if (!verification) {
+    const result = await prisma.verification.updateMany({
+      where: { userId: req.params.userId },
+      data: { verified: true, verifiedAt: new Date() }
+    });
+
+    if (result.count === 0) {
       return res.status(404).json({ error: 'Verification not found' });
     }
 
     // Update user verified status and refresh identity trust stars (ID = +30)
-    const User = require('../models/User');
-    await User.findByIdAndUpdate(req.params.userId, { verified: true });
+    await prisma.user.updateMany({
+      where: { id: req.params.userId },
+      data: { verified: true }
+    });
     try {
       const { refreshTrust } = require('../utils/trustScore');
-      await refreshTrust(User, req.params.userId);
+      await refreshTrust(prisma, req.params.userId);
     } catch (e) { console.error('Trust refresh (KYC) failed:', e.message); }
 
     res.json({ message: 'User verified successfully' });
@@ -136,15 +144,15 @@ router.get('/documents/:type', auth, async (req, res) => {
     if (!['idFront', 'idBack', 'selfie'].includes(type)) {
       return res.status(400).json({ error: 'Invalid document type' });
     }
-    const verification = await Verification.findOne({ userId: req.userId });
+    const verification = await prisma.verification.findFirst({ where: { userId: req.userId } });
     if (!verification || !verification[type]) {
       return res.status(404).json({ error: 'Document not found' });
     }
     const fileUrl = verification[type];
     if (!fileUrl.startsWith('http')) {
-      // Legacy local file fallback: only available when Cloudinary is not enabled.
-      // Use path.basename so a tampered stored value can never traverse out of
-      // the uploads folder (e.g. "../../etc/passwd").
+      // Legacy local file fallback: only available when remote storage is not
+      // in play. Use path.basename so a tampered stored value can never
+      // traverse out of the uploads folder (e.g. "../../etc/passwd").
       const folder = type === 'selfie' ? 'selfies' : 'ids';
       const safeName = path.basename(fileUrl);
       const filePath = path.join(__dirname, '..', 'uploads', folder, safeName);
@@ -153,7 +161,7 @@ router.get('/documents/:type', auth, async (req, res) => {
       }
       return res.sendFile(filePath);
     }
-    // Cloudinary URL: redirect through the authenticated gate.
+    // Remote storage URL: redirect through the authenticated gate.
     res.redirect(fileUrl);
   } catch (err) {
     console.error('Document fetch error:', err);

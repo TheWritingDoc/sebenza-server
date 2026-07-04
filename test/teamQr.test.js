@@ -18,8 +18,8 @@ test('generated codes are 6 chars from the unambiguous alphabet', () => {
   }
 });
 
-test('payload round-trips through parse', () => {
-  const teamId = '64b7f3a1c2d4e5f6a7b8c9d0';
+test('payload round-trips through parse (UUID team ids)', () => {
+  const teamId = '6a482db7-01f0-49bd-a627-77ee10abcdef';
   const payload = buildQrPayload(teamId, 'ABC234');
   const parsed = parseQrPayload(payload);
   assert.strictEqual(parsed.teamId, teamId);
@@ -36,9 +36,10 @@ test('garbage, foreign QRs and malformed payloads are rejected', () => {
   assert.strictEqual(parseQrPayload(''), null);
   assert.strictEqual(parseQrPayload(null), null);
   assert.strictEqual(parseQrPayload('https://evil.example/phish'), null);
-  assert.strictEqual(parseQrPayload('SEBENZA-TEAM:notahexid:ABC234'), null);
-  assert.strictEqual(parseQrPayload('SEBENZA-TEAM:64b7f3a1c2d4e5f6a7b8c9d0'), null);
-  assert.strictEqual(parseQrPayload('SEBENZA-TEAM:64b7f3a1c2d4e5f6a7b8c9d0:A:B'), null);
+  assert.strictEqual(parseQrPayload('SEBENZA-TEAM:notauuid:ABC234'), null);
+  assert.strictEqual(parseQrPayload('SEBENZA-TEAM:64b7f3a1c2d4e5f6a7b8c9d0:ABC234'), null, 'legacy Mongo ObjectIds rejected');
+  assert.strictEqual(parseQrPayload('SEBENZA-TEAM:6a482db7-01f0-49bd-a627-77ee10abcdef'), null);
+  assert.strictEqual(parseQrPayload('SEBENZA-TEAM:6a482db7-01f0-49bd-a627-77ee10abcdef:A:B'), null);
 });
 
 test('isCodeValid: matches active unexpired session only', () => {
