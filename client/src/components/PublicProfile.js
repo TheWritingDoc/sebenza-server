@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
 import { TrustStars } from './TrustCenter';
+import { Briefcase, Wrench, ThumbsUp, CheckCircle2 } from './Icons';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -152,7 +153,7 @@ function PublicProfile() {
           <span style={{
             display: 'inline-block', background: '#d1fae5', color: '#065f46',
             padding: '4px 12px', borderRadius: '12px', fontSize: '12px', fontWeight: 600
-          }}>✓ Verified</span>
+          }}><CheckCircle2 size={12} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Verified</span>
         )}
 
         {/* Recommend / endorse */}
@@ -164,7 +165,7 @@ function PublicProfile() {
             background: rec.endorsed ? 'linear-gradient(135deg,#22c55e,#16a34a)' : 'white',
             color: rec.endorsed ? 'white' : '#334155', transition: 'all 0.2s',
           }}>
-            {rec.endorsed ? '👍 Recommended' : '👍 Recommend'}
+            <ThumbsUp size={16} color="currentColor" style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />{rec.endorsed ? 'Recommended' : 'Recommend'}
             {rec.count > 0 && (
               <span style={{
                 background: rec.endorsed ? 'rgba(255,255,255,0.25)' : '#f1f5f9',
@@ -185,7 +186,7 @@ function PublicProfile() {
       {verifiedWork.length > 0 && (
         <div style={{ background: 'white', borderRadius: '16px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', marginTop: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}>🛠️ Verified Work</h3>
+            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600 }}><Wrench size={16} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Verified Work</h3>
             <span style={{ background: '#d1fae5', color: '#065f46', padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 700 }}>
               ✓ Verified by Sebenza
             </span>
@@ -237,7 +238,7 @@ function PublicProfile() {
       {/* Work experience */}
       {profile.workExperience?.length > 0 && (
         <div style={{ background: 'white', borderRadius: '16px', padding: '20px', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', marginTop: '16px' }}>
-          <h3 style={{ margin: '0 0 12px', fontSize: '16px', fontWeight: 600 }}>💼 Work Experience</h3>
+          <h3 style={{ margin: '0 0 12px', fontSize: '16px', fontWeight: 600 }}><Briefcase size={16} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Work Experience</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             {profile.workExperience.map((w, i) => (
               <div key={i} style={{ padding: '12px 14px', borderRadius: '10px', background: '#f8fafc', border: '1px solid #f1f5f9' }}>

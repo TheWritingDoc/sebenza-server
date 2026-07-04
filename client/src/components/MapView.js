@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
+import { MapIcon, MapPin, Building2 } from './Icons';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -126,14 +127,14 @@ function MapView({ user }) {
 
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '12px 12px 90px' }}>
-      <h1 style={{ fontSize: 20, fontWeight: 800, margin: '0 0 4px', color: '#1e293b' }}>🗺️ Map</h1>
+      <h1 style={{ fontSize: 20, fontWeight: 800, margin: '0 0 4px', color: '#1e293b' }}><MapIcon size={20} color="#4f46e5" style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Map</h1>
       <p style={{ fontSize: 13, color: '#64748b', margin: '0 0 10px' }}>
-        📌 {counts.jobs} live jobs · 🏢 {counts.businesses} businesses near you
+        <MapPin size={13} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />{counts.jobs} live jobs · <Building2 size={13} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />{counts.businesses} businesses near you
       </p>
       <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
         {tab('all', 'All')}
-        {tab('jobs', '📌 Jobs')}
-        {tab('businesses', '🏢 Businesses')}
+        {tab('jobs', <><MapPin size={14} color="currentColor" style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Jobs</>)}
+        {tab('businesses', <><Building2 size={14} color="currentColor" style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Businesses</>)}
       </div>
       {error && <div style={{ background: '#fef2f2', color: '#991b1b', padding: 12, borderRadius: 12, fontSize: 13, marginBottom: 10 }}>{error}</div>}
       <div ref={mapEl} style={{ height: '65vh', minHeight: 380, borderRadius: 16, overflow: 'hidden', border: '1px solid #e2e8f0' }} />

@@ -22,6 +22,7 @@ model User {
   lat                            Float     @default(0)
   lng                            Float     @default(0)
   avatar                         String    @default("")
+  bio                            String    @default("")
   credits                        Decimal   @default(1000) @db.Decimal(12, 2)
   randBalance                    Decimal   @default(1000) @map("rand_balance") @db.Decimal(12, 2)
   escrowRand                     Decimal   @default(0) @map("escrow_rand") @db.Decimal(12, 2)

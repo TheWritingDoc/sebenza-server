@@ -34,7 +34,9 @@ function Profile({ user, setUser }) {
     name: user?.name || '',
     email: user?.email || '',
     phone: user?.phone || '',
-    bio: user?.bio || ''
+    bio: user?.bio || '',
+    skills: Array.isArray(user?.skills) ? user.skills.join(', ') : '',
+    primaryCategory: user?.primaryCategory || ''
   });
 
   const handleSubmit = async (e) => {
@@ -46,10 +48,14 @@ function Profile({ user, setUser }) {
       const res = await axios.put(`${API_URL}/api/users/${user.id || user._id}`, formData, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      setUser(res.data);
-      setMessage('Profile updated successfully!');
+      const updated = { ...user, ...res.data };
+      setUser(updated);
+      localStorage.setItem('sebenza_user', JSON.stringify(updated));
+      setMessage(res.data.trustStars != null
+        ? `Profile updated successfully! Trust: ${res.data.trustStars}/10 stars`
+        : 'Profile updated successfully!');
     } catch (err) {
-      setMessage('Failed to update profile. Please try again.');
+      setMessage(err.response?.data?.error || 'Failed to update profile. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -132,7 +138,28 @@ function Profile({ user, setUser }) {
               value={formData.bio}
               onChange={e => setFormData({...formData, bio: e.target.value})}
               rows={3}
+              placeholder="Tell neighbours who you are and what you do — this earns trust stars"
               style={{ width: '100%', padding: 12, borderRadius: 12, border: '2px solid #e2e8f0', fontSize: 14, outline: 'none', resize: 'vertical' }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#1e293b', marginBottom: 6 }}>Skills <span style={{ color: '#94a3b8', fontWeight: 400 }}>(comma separated)</span></label>
+            <input
+              type="text"
+              value={formData.skills}
+              onChange={e => setFormData({...formData, skills: e.target.value})}
+              placeholder="Painting, Tiling, Garden care"
+              style={{ width: '100%', padding: 12, borderRadius: 12, border: '2px solid #e2e8f0', fontSize: 14, outline: 'none' }}
+            />
+          </div>
+          <div>
+            <label style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#1e293b', marginBottom: 6 }}>Main category</label>
+            <input
+              type="text"
+              value={formData.primaryCategory}
+              onChange={e => setFormData({...formData, primaryCategory: e.target.value})}
+              placeholder="e.g. Painting"
+              style={{ width: '100%', padding: 12, borderRadius: 12, border: '2px solid #e2e8f0', fontSize: 14, outline: 'none' }}
             />
           </div>
           <button

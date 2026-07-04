@@ -1,5 +1,6 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
+import { IconBox, ClipboardList, Plus, Briefcase, UserCircle, Users } from './Icons';
 
 function Dashboard({ user }) {
   const navigate = useNavigate();
@@ -34,7 +35,7 @@ function Dashboard({ user }) {
             e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)';
           }}
         >
-          <div style={{ fontSize: 32, marginBottom: 12 }}>📋</div>
+          <IconBox size={52} bg="#eef2ff" style={{ marginBottom: 12 }}><ClipboardList size={26} color="#4f46e5" /></IconBox>
           <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: '#1e293b' }}>Browse Jobs</h3>
           <p style={{ fontSize: 13, color: '#64748b' }}>Find tasks nearby and offer to help</p>
         </div>
@@ -59,7 +60,7 @@ function Dashboard({ user }) {
             e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)';
           }}
         >
-          <div style={{ fontSize: 32, marginBottom: 12 }}>✏️</div>
+          <IconBox size={52} bg="#eef2ff" style={{ marginBottom: 12 }}><Plus size={26} color="#4f46e5" /></IconBox>
           <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: '#1e293b' }}>Post a Job</h3>
           <p style={{ fontSize: 13, color: '#64748b' }}>Need help? Post a task in 30 seconds</p>
         </div>
@@ -84,7 +85,7 @@ function Dashboard({ user }) {
             e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)';
           }}
         >
-          <div style={{ fontSize: 32, marginBottom: 12 }}>💼</div>
+          <IconBox size={52} bg="#eef2ff" style={{ marginBottom: 12 }}><Briefcase size={26} color="#4f46e5" /></IconBox>
           <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: '#1e293b' }}>My Work</h3>
           <p style={{ fontSize: 13, color: '#64748b' }}>View your job history and active tasks</p>
         </div>
@@ -109,7 +110,7 @@ function Dashboard({ user }) {
             e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)';
           }}
         >
-          <div style={{ fontSize: 32, marginBottom: 12 }}>👤</div>
+          <IconBox size={52} bg="#eef2ff" style={{ marginBottom: 12 }}><UserCircle size={26} color="#4f46e5" /></IconBox>
           <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: '#1e293b' }}>My Profile</h3>
           <p style={{ fontSize: 13, color: '#64748b' }}>Manage your account and settings</p>
         </div>
@@ -134,7 +135,7 @@ function Dashboard({ user }) {
             e.currentTarget.style.boxShadow = '0 1px 3px rgba(0,0,0,0.04)';
           }}
         >
-          <div style={{ fontSize: 32, marginBottom: 12 }}>👥</div>
+          <IconBox size={52} bg="#eef2ff" style={{ marginBottom: 12 }}><Users size={26} color="#4f46e5" /></IconBox>
           <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: '#1e293b' }}>Your Team</h3>
           <p style={{ fontSize: 13, color: '#64748b' }}>Work as a crew under one supervisor</p>
         </div>

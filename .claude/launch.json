@@ -6,6 +6,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["index.js"],
       "port": 3001
+    },
+    {
+      "name": "ashwell-site",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["C:/Users/MSI CYBORG/ashwell-site/dev-server.js"],
+      "port": 8787
     }
   ]
 }

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { getImageUrl, PLACEHOLDER_IMG, modalOverlayStyle, modalContentStyle, MAX_NEGOTIATION_ROUNDS } from '../shared/constants';
 import { scrollToRef, blurActiveInput, mobileFieldFocusScroll } from '../shared/workflowFocus';
-import { UserCircle } from './Icons';
+import { UserCircle, IdCard } from './Icons';
 import { TrustStars } from './TrustCenter';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
@@ -290,7 +290,7 @@ function JobApplicantsModal({ job, user, onClose, onUpdated, onViewPortfolio }) 
               <TrustStars stars={trustStars} size={14} />
               {isVerified && (
                 <span style={{ fontSize: 10, fontWeight: 800, background: '#dbeafe', color: '#1d4ed8', padding: '2px 8px', borderRadius: 999, display: 'inline-flex', alignItems: 'center', gap: 3 }}>
-                  🪪 ID Verified
+                  <IdCard size={12} color="currentColor" /> ID Verified
                 </span>
               )}
               {applicant?.trustLevel && (

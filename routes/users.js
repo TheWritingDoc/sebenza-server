@@ -764,4 +764,40 @@ router.get('/stats', async (req, res) => {
   }
 });
 
+// Update my own profile (name, bio, phone, skills, category). Completing the
+// profile is an identity trust item, so stars refresh after every save.
+// Non-UUID ids fall through to the app-level /status and /location handlers.
+router.put('/:id', auth, async (req, res, next) => {
+  try {
+    if (!isId(req.params.id)) return next();
+    if (String(req.params.id) !== String(req.user.userId)) {
+      return res.status(403).json({ error: 'You can only update your own profile' });
+    }
+
+    const { name, bio, phone, skills, primaryCategory } = req.body;
+    const data = {};
+    if (typeof name === 'string' && name.trim()) data.name = name.trim().slice(0, 100);
+    if (typeof bio === 'string') data.bio = bio.trim().slice(0, 600);
+    if (typeof phone === 'string') data.phone = phone.replace(/[\s\-().]/g, '').slice(0, 20);
+    if (typeof primaryCategory === 'string') data.primaryCategory = primaryCategory.trim().slice(0, 60);
+    if (skills !== undefined) {
+      const list = Array.isArray(skills) ? skills : String(skills).split(',');
+      data.skills = list.map(s => String(s).trim().slice(0, 40)).filter(Boolean).slice(0, 20);
+    }
+    // Email changes are deliberately ignored — email is the login identity
+    // and is verified separately.
+
+    const user = await prisma.user.update({ where: { id: req.user.userId }, data });
+    const trust = await refreshTrust(prisma, req.user.userId).catch(() => null);
+
+    const dto = sanitizeUser(user);
+    dto.location = { lat: user.lat, lng: user.lng };
+    if (trust) { dto.trustStars = trust.stars; dto.trustLevel = trust.level; }
+    res.json(dto);
+  } catch (err) {
+    console.error('Profile update error:', err);
+    res.status(500).json({ error: 'Server error updating profile' });
+  }
+});
+
 module.exports = router;

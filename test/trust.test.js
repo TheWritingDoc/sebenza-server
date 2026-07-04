@@ -10,11 +10,20 @@ function test(name, fn) {
 
 console.log('\n🧪  identity trust-star tests\n');
 
-test('fresh signup: account only = 0.5 star minimum floor', () => {
+test('fresh signup: account only = visible minimum star on the 10-star ladder', () => {
   const t = computeTrust({});
-  assert.strictEqual(t.stars, 0.5);
+  assert.strictEqual(t.stars, 1, 'account alone = 1 of 10 stars');
+  assert.strictEqual(t.maxStars, 10);
   assert.strictEqual(t.level, 'New Neighbour');
   assert.strictEqual(t.checklist.find(c => c.key === 'account').done, true);
+});
+
+test('completing the profile (bio + skills + category) is a trust item', () => {
+  assert.strictEqual(computeTrust({}).checklist.find(c => c.key === 'profile').done, false);
+  assert.strictEqual(computeTrust({ bio: 'x', skills: [], primaryCategory: 'Painting' }).checklist.find(c => c.key === 'profile').done, false, 'needs skills too');
+  const done = computeTrust({ bio: 'Painter from PE', skills: ['Painting'], primaryCategory: 'Painting' });
+  assert.strictEqual(done.checklist.find(c => c.key === 'profile').done, true);
+  assert.ok(done.stars > computeTrust({}).stars, 'profile completion raises stars');
 });
 
 test('email verification is an identity item worth points', () => {
@@ -52,9 +61,10 @@ test('firstJob satisfied by communityStats.jobsCompleted >= 1', () => {
   assert.strictEqual(computeTrust({ communityStats: { jobsCompleted: 3 } }).checklist.find(c=>c.key==='firstJob').done, true);
 });
 
-test('fully verified profile = 100 score, 5 stars, Fully Verified', () => {
+test('fully verified profile = 100 score, 10 stars, Fully Verified', () => {
   const t = computeTrust({
     emailVerified: true, profileImage: '/me.jpg', phoneVerified: true, verified: true,
+    bio: 'Plumber', skills: ['Plumbing'], primaryCategory: 'Plumbing',
     trustDocs: [
       { docType: 'address', status: 'approved' },
       { docType: 'drivers_license', status: 'approved' },
@@ -64,14 +74,14 @@ test('fully verified profile = 100 score, 5 stars, Fully Verified', () => {
     communityStats: { jobsCompleted: 2 },
   });
   assert.strictEqual(t.score, 100);
-  assert.strictEqual(t.stars, 5);
+  assert.strictEqual(t.stars, 10);
   assert.strictEqual(t.level, 'Fully Verified');
 });
 
 test('stars are identity-only: perfect reviews with no ID stay low', () => {
   // Great reviews but nothing verified -> still just the account star.
   const t = computeTrust({ communityStats: { receivedRatingsAvg: 5, jobsCompleted: 0 } });
-  assert.strictEqual(t.stars, 0.5);
+  assert.strictEqual(t.stars, 1);
 });
 
 console.log(`\n${passed}/${passed + failed} tests passed\n`);

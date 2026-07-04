@@ -6,10 +6,11 @@
  * sides feel safe. They are NOT a quality/review rating (that lives in
  * user.communityStats.receivedRatingsAvg and is shown separately).
  *
- * Score is 0–100 identity points; stars are score mapped onto a 0.5–5 scale
- * (nearest half-star, matching the client's half-star renderer). A freshly
- * registered user always has the "account" item done, so they sign in with a
- * visible minimum star and climb as they add verifications/documents.
+ * Score is 0–100 identity points; stars are score mapped onto a 0.5–10 scale
+ * (nearest half-star — the ladder tops out at TEN stars, matching the
+ * client's renderer). A freshly registered user always has the "account"
+ * item done, so they sign in with a visible minimum star and climb as they
+ * add verifications/documents.
  */
 
 // Each identity item and the raw points it contributes. The displayed score is
@@ -19,6 +20,7 @@ const TRUST_ITEMS = [
   { key: 'account',       label: 'Join the community',   points: 10, action: null,            auto: true },
   { key: 'email',         label: 'Verify your email',    points: 10, action: 'email' },
   { key: 'photo',         label: 'Add a profile photo',  points: 10, action: 'photo' },
+  { key: 'profile',       label: 'Complete your profile', points: 10, action: 'profile' },
   { key: 'phone',         label: 'Verify your phone',    points: 10, action: 'phone' },
   { key: 'id',            label: 'Verify your ID',       points: 30, action: 'id' },
   { key: 'address',       label: 'Proof of address',     points: 10, action: 'address' },
@@ -41,6 +43,9 @@ function isItemDone(user, key) {
     case 'account':       return true; // registered = done
     case 'email':         return !!user.emailVerified;
     case 'photo':         return !!(user.profileImage || user.avatar);
+    case 'profile':       return !!((user.bio || '').trim() &&
+                                    Array.isArray(user.skills) && user.skills.length > 0 &&
+                                    (user.primaryCategory || '').trim());
     case 'phone':         return !!user.phoneVerified;
     case 'id':            return !!user.verified; // set true when KYC is approved
     case 'address':       return hasApprovedOrPendingDoc(user, 'address');
@@ -77,12 +82,12 @@ function computeTrust(user) {
   });
 
   // Normalise earned points to a 0–100 score against the total available,
-  // then map to 0–5 stars (nearest half star). Account is always done, so the
-  // floor is a visible ~0.5 star at sign-in.
+  // then map to 0–10 stars (nearest half star, 0.5 floor). Account is always
+  // done, so every member signs in with a visible star.
   const score = Math.round((earned / TOTAL_POINTS) * 100);
-  const stars = Math.round((earned / TOTAL_POINTS) * 5 * 2) / 2;
+  const stars = Math.max(0.5, Math.round((earned / TOTAL_POINTS) * 10 * 2) / 2);
 
-  return { score, stars, level: levelForScore(score), checklist };
+  return { score, stars, level: levelForScore(score), checklist, maxStars: 10 };
 }
 
 /**

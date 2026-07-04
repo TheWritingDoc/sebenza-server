@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { TrustStars } from './TrustCenter';
+import { Users, QrCode, Camera, Building2 } from './Icons';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -196,7 +197,7 @@ function TeamManager({ user }) {
   return (
     <div style={{ maxWidth: 600, margin: '0 auto', padding: '16px 16px 100px' }}>
       <button onClick={() => navigate(-1)} style={{ background: 'none', border: 'none', color: '#6366f1', fontSize: 14, fontWeight: 600, cursor: 'pointer', marginBottom: 12 }}>← Back</button>
-      <h2 style={{ fontSize: 22, fontWeight: 800, color: '#1e293b', margin: '0 0 4px' }}>👥 Your Team</h2>
+      <h2 style={{ fontSize: 22, fontWeight: 800, color: '#1e293b', margin: '0 0 4px' }}><Users size={20} color="#4f46e5" style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Your Team</h2>
       <p style={{ color: '#64748b', fontSize: 14, margin: '0 0 16px' }}>Work as a crew under one supervisor.</p>
 
       {msg && <div style={{ ...card, textAlign: 'center', color: msg.startsWith('✅') ? '#166534' : '#991b1b', background: msg.startsWith('✅') ? '#f0fdf4' : '#fef2f2', fontWeight: 600, fontSize: 14 }}>{msg}</div>}
@@ -229,7 +230,9 @@ function TeamManager({ user }) {
               <button key={t} onClick={() => setTeamType(t)} style={{
                 flex: 1, minHeight: 44, borderRadius: 12, border: teamType === t ? '2px solid #6366f1' : '2px solid #e2e8f0',
                 background: teamType === t ? '#eef2ff' : 'white', color: teamType === t ? '#4338ca' : '#475569', fontWeight: 700, cursor: 'pointer', textTransform: 'capitalize'
-              }}>{t === 'team' ? '👥 Team' : '🏢 Business'}</button>
+              }}>{t === 'team'
+                ? <><Users size={14} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Team</>
+                : <><Building2 size={14} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Business</>}</button>
             ))}
           </div>
           <button disabled={busy} onClick={createTeam} style={{ ...btn('linear-gradient(135deg,#6366f1,#4f46e5)'), width: '100%' }}>Create Team</button>
@@ -243,7 +246,9 @@ function TeamManager({ user }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
               <h3 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>{team.name}</h3>
               <span style={{ fontSize: 11, fontWeight: 800, background: '#eef2ff', color: '#4338ca', padding: '3px 10px', borderRadius: 999 }}>
-                {team.type === 'business' ? '🏢 Business' : '👥 Team'} · Supervisor
+                {team.type === 'business'
+                  ? <><Building2 size={14} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Business</>
+                  : <><Users size={14} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Team</>} · Supervisor
               </span>
             </div>
             <p style={{ fontSize: 13, color: '#64748b', margin: '0 0 8px' }}>{activeMembers.length} active member{activeMembers.length === 1 ? '' : 's'}</p>
@@ -258,7 +263,7 @@ function TeamManager({ user }) {
           </div>
 
           <div style={card}>
-            <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 4px' }}>📷 On-site QR check-in</h3>
+            <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 4px' }}><QrCode size={16} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />On-site QR check-in</h3>
             <p style={{ fontSize: 13, color: '#64748b', margin: '0 0 12px' }}>
               Show this QR to a member on site — they scan it to confirm you're working together (and their role).
             </p>
@@ -327,7 +332,7 @@ function TeamManager({ user }) {
             </div>
 
             <div style={card}>
-              <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 4px' }}>📷 Confirm you're working together</h3>
+              <h3 style={{ fontSize: 15, fontWeight: 700, margin: '0 0 4px' }}><QrCode size={16} style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Confirm you're working together</h3>
               <p style={{ fontSize: 13, color: '#64748b', margin: '0 0 12px' }}>
                 Scan your supervisor's QR code on site, or type the code they show you. Adding your role is optional.
               </p>
@@ -338,7 +343,7 @@ function TeamManager({ user }) {
                   <button onClick={stopScan} style={{ ...btn('#f1f5f9'), color: '#475569', width: '100%', marginTop: 10 }}>Stop scanning</button>
                 </div>
               ) : (
-                <button disabled={busy} onClick={startScan} style={{ ...btn('linear-gradient(135deg,#0ea5e9,#0284c7)'), width: '100%', marginBottom: 10 }}>📷 Scan QR Code</button>
+                <button disabled={busy} onClick={startScan} style={{ ...btn('linear-gradient(135deg,#0ea5e9,#0284c7)'), width: '100%', marginBottom: 10 }}><Camera size={16} color="white" style={{ verticalAlign: 'text-bottom', marginRight: 6 }} />Scan QR Code</button>
               )}
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: scanning ? 10 : 0 }}>
                 <input style={{ ...input, flex: 1, minWidth: 140, textTransform: 'uppercase', letterSpacing: 2 }} placeholder="or type code"

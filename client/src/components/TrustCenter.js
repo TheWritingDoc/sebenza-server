@@ -2,13 +2,18 @@ import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
 import SMSVerify from './SMSVerify';
 import Verification from './Verification';
+import {
+  ShieldCheck, Mail, Camera, Phone, IdCard, Home as HomeIcon, Car,
+  GraduationCap, Briefcase, Trophy, UserCircle, CheckCircle2
+} from './Icons';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
-export function TrustStars({ stars, size = 18 }) {
+// Identity trust ladder tops out at TEN stars.
+export function TrustStars({ stars, size = 14, max = 10 }) {
   return (
-    <span style={{ display: 'inline-flex', gap: 2, verticalAlign: 'middle' }} aria-label={`${stars} out of 5 trust stars`}>
-      {[1, 2, 3, 4, 5].map(i => {
+    <span style={{ display: 'inline-flex', gap: 1, verticalAlign: 'middle' }} aria-label={`${stars} out of ${max} trust stars`}>
+      {Array.from({ length: max }, (_, idx) => idx + 1).map(i => {
         const fill = stars >= i ? 'full' : stars >= i - 0.5 ? 'half' : 'empty';
         return (
           <span key={i} style={{ fontSize: size, lineHeight: 1, position: 'relative', color: '#e2e8f0' }}>
@@ -27,16 +32,17 @@ export function TrustStars({ stars, size = 18 }) {
 }
 
 const ITEM_META = {
-  account:       { icon: '✅', hint: 'Done — welcome to the community!' },
-  email:         { icon: '✉️', hint: 'Verify your email with a code' },
-  photo:         { icon: '📸', hint: 'Add a clear photo of your face' },
-  phone:         { icon: '📱', hint: 'Verify with a one-time SMS code' },
-  id:            { icon: '🪪', hint: 'Upload your SA ID — biggest trust boost' },
-  address:       { icon: '🏠', hint: 'Utility bill or bank letter' },
-  license:       { icon: '🚗', hint: "Photo of your driver's licence card" },
-  qualification: { icon: '🎓', hint: 'Certificate, trade ticket or diploma' },
-  experience:    { icon: '💼', hint: 'Tell neighbours what you’ve done before' },
-  firstJob:      { icon: '🏆', hint: 'Complete your first job on the app' },
+  account:       { Icon: CheckCircle2,  hint: 'Done — welcome to the community!' },
+  email:         { Icon: Mail,          hint: 'Verify your email with a code' },
+  photo:         { Icon: Camera,        hint: 'Add a clear photo of your face' },
+  profile:       { Icon: UserCircle,    hint: 'Bio, skills and your main category' },
+  phone:         { Icon: Phone,         hint: 'Verify with a one-time SMS code' },
+  id:            { Icon: IdCard,        hint: 'ID card front + back + selfie — biggest boost' },
+  address:       { Icon: HomeIcon,      hint: 'Utility bill or bank letter' },
+  license:       { Icon: Car,           hint: "Photo of your driver's licence card" },
+  qualification: { Icon: GraduationCap, hint: 'Certificate, trade ticket or diploma' },
+  experience:    { Icon: Briefcase,     hint: 'Tell neighbours what you’ve done before' },
+  firstJob:      { Icon: Trophy,        hint: 'Complete your first job on the app' },
 };
 
 function DocUpload({ docType, label, onDone }) {
@@ -106,6 +112,73 @@ function DocUpload({ docType, label, onDone }) {
       <button onClick={submit} disabled={loading || !file}
         className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 disabled:bg-gray-300 transition-all text-sm">
         {loading ? 'Uploading...' : 'Submit Document'}
+      </button>
+    </div>
+  );
+}
+
+function ProfileStep({ user, setUser, onDone }) {
+  const stored = (() => { try { return JSON.parse(localStorage.getItem('sebenza_user') || '{}'); } catch { return {}; } })();
+  const me = { ...stored, ...(user || {}) };
+  const [bio, setBio] = useState(me.bio || '');
+  const [skills, setSkills] = useState(Array.isArray(me.skills) ? me.skills.join(', ') : '');
+  const [category, setCategory] = useState(me.primaryCategory || '');
+  const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState('');
+  const token = localStorage.getItem('token');
+
+  const submit = async () => {
+    if (!bio.trim() || !skills.trim() || !category.trim()) {
+      setMessage('Please fill in your bio, at least one skill, and your main category.');
+      return;
+    }
+    setLoading(true); setMessage('');
+    try {
+      const id = me._id || me.id;
+      const res = await axios.put(`${API_URL}/api/users/${id}`, {
+        bio, skills, primaryCategory: category
+      }, { headers: { Authorization: `Bearer ${token}` } });
+      if (setUser) {
+        const updated = { ...me, bio: res.data.bio, skills: res.data.skills, primaryCategory: res.data.primaryCategory };
+        setUser(updated);
+        localStorage.setItem('sebenza_user', JSON.stringify(updated));
+      }
+      setMessage('✅ Profile saved! Your trust score has been updated.');
+      setTimeout(onDone, 1100);
+    } catch (err) {
+      setMessage(err.response?.data?.error || 'Could not save your profile');
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div className="space-y-4">
+      {message && (
+        <div className={`p-3 rounded-xl text-center text-sm font-medium ${message.startsWith('✅') ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'}`}>
+          {message}
+        </div>
+      )}
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-1">About you *</label>
+        <textarea value={bio} onChange={e => setBio(e.target.value)} rows={3} maxLength={600}
+          className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 text-sm"
+          placeholder="e.g. Reliable painter and handyman from Gqeberha, 8 years experience." />
+      </div>
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-1">Your skills * <span className="text-gray-400 font-normal">(comma separated)</span></label>
+        <input value={skills} onChange={e => setSkills(e.target.value)}
+          className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 text-sm"
+          placeholder="Painting, Tiling, Garden care" />
+      </div>
+      <div>
+        <label className="block text-sm font-semibold text-gray-700 mb-1">Main category *</label>
+        <input value={category} onChange={e => setCategory(e.target.value)}
+          className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 text-sm"
+          placeholder="e.g. Painting" />
+      </div>
+      <button onClick={submit} disabled={loading}
+        className="w-full bg-blue-600 text-white py-3 rounded-xl font-semibold hover:bg-blue-700 disabled:bg-gray-300 transition-all text-sm">
+        {loading ? 'Saving...' : 'Save Profile'}
       </button>
     </div>
   );
@@ -385,12 +458,15 @@ function TrustCenter({ user, setUser }) {
             ← Back to Trust Centre
           </button>
           <div className="text-center mb-5">
-            <div className="text-4xl mb-2">{meta.icon}</div>
+            <div className="mb-2 flex justify-center">
+              {meta.Icon ? <meta.Icon size={40} color="#4f46e5" strokeWidth={1.7} /> : null}
+            </div>
             <h2 className="text-xl font-bold text-gray-900">{item?.label}</h2>
             <p className="text-gray-500 text-sm mt-1">{meta.hint}</p>
           </div>
 
           {active === 'email' && <EmailStep onDone={closeStep} />}
+          {active === 'profile' && <ProfileStep user={user} setUser={setUser} onDone={closeStep} />}
           {active === 'phone' && <PhoneStep user={user} onDone={handlePhoneVerified} />}
           {active === 'id' && <Verification embedded onStatusChange={closeStep} />}
           {active === 'address' && <DocUpload docType="address" label="Proof of address" onDone={closeStep} />}
@@ -408,11 +484,12 @@ function TrustCenter({ user, setUser }) {
     <div className="max-w-lg mx-auto p-4">
       {/* Score header */}
       <div className="bg-white rounded-2xl shadow-lg p-6 mb-4 text-center">
-        <div className="text-4xl mb-2">🛡️</div>
+        <div className="mb-2 flex justify-center"><ShieldCheck size={42} color="#4f46e5" strokeWidth={1.7} /></div>
         <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Trust Centre</h2>
         <p className="text-gray-500 text-sm mt-1 mb-4">The more you verify, the more jobs you win</p>
 
-        <div className="mb-2"><TrustStars stars={trust.stars} size={28} /></div>
+        <div className="mb-1"><TrustStars stars={trust.stars} size={22} /></div>
+        <div className="text-xs text-gray-400 font-semibold mb-1">{trust.stars} / 10 stars</div>
         <div className="text-sm font-bold text-amber-600 mb-3">{trust.level}</div>
 
         <div className="h-3 bg-gray-100 rounded-full overflow-hidden max-w-xs mx-auto">
@@ -434,7 +511,11 @@ function TrustCenter({ user, setUser }) {
               className={`w-full flex items-center gap-3 p-4 rounded-2xl border-2 text-left transition-all ${
                 item.done ? 'bg-green-50 border-green-100' : clickable ? 'bg-white border-gray-100 hover:border-blue-300 active:scale-[0.99]' : 'bg-gray-50 border-gray-100 opacity-70'
               }`}>
-              <span className="text-2xl flex-shrink-0">{item.done ? '✅' : meta.icon}</span>
+              <span className="flex-shrink-0 flex items-center justify-center" style={{ width: 34, height: 34, borderRadius: 10, background: item.done ? '#dcfce7' : '#eef2ff' }}>
+                {item.done
+                  ? <CheckCircle2 size={18} color="#16a34a" />
+                  : meta.Icon ? <meta.Icon size={18} color="#4f46e5" /> : null}
+              </span>
               <span className="flex-1 min-w-0">
                 <span className={`block text-sm font-bold ${item.done ? 'text-green-800' : 'text-gray-900'}`}>{item.label}</span>
                 <span className="block text-xs text-gray-500 mt-0.5">{item.done ? 'Completed' : meta.hint}</span>
