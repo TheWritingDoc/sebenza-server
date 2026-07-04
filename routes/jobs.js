@@ -146,6 +146,44 @@ function getJobParties(job, userId) {
   return { isPoster, isProvider, isParty: isPoster || isProvider, acceptedApp, acceptedApplicantId };
 }
 
+// ── Community feedback plumbing ───────────────────────────────────────
+// Job ratings feed the COMMUNITY half of the 10-star ladder. Every rating a
+// user receives updates their running average; completing a job bumps the
+// jobsCompleted/jobsRequested counters (and the firstJob identity star).
+async function applyRatingToUser(userId, rating) {
+  try {
+    const u = await prisma.user.findUnique({ where: { id: userId }, select: { communityStats: true } });
+    if (!u) return;
+    const cs = { ...(u.communityStats || {}) };
+    const n = (cs.totalReceivedReviews || 0) + 1;
+    cs.receivedRatingsAvg = Math.round(((((cs.receivedRatingsAvg || 0) * (n - 1)) + rating) / n) * 100) / 100;
+    cs.totalReceivedReviews = n;
+    await prisma.user.update({ where: { id: userId }, data: { communityStats: cs } });
+  } catch (e) {
+    console.error('applyRatingToUser failed:', e.message);
+  }
+}
+
+async function bumpCompletionCounters(providerId, posterId) {
+  try {
+    for (const [id, key] of [[providerId, 'jobsCompleted'], [posterId, 'jobsRequested']]) {
+      if (!id) continue;
+      const u = await prisma.user.findUnique({ where: { id }, select: { communityStats: true } });
+      if (!u) continue;
+      const cs = { ...(u.communityStats || {}) };
+      cs[key] = (cs[key] || 0) + 1;
+      await prisma.user.update({ where: { id }, data: { communityStats: cs } });
+    }
+    // First completed job is an identity trust item for the provider.
+    if (providerId) {
+      const { refreshTrust } = require('../utils/trustScore');
+      await refreshTrust(prisma, providerId).catch(() => {});
+    }
+  } catch (e) {
+    console.error('bumpCompletionCounters failed:', e.message);
+  }
+}
+
 function requesterFromToken(req) {
   const token = req.headers.authorization?.split(' ')[1];
   if (!token) return null;
@@ -1198,6 +1236,12 @@ router.post('/:id/confirm-completion', auth, upload.array('photos', 10), async (
 
     res.json({ message: 'Completion confirmed, awaiting payment' });
 
+    // The poster's rating counts toward the provider's community stars.
+    try {
+      const { acceptedApp: ratedApp } = getJobParties(job, req.userId);
+      if (ratedApp) await applyRatingToUser(String(ratedApp.applicantId), ratingNum);
+    } catch (e) { console.error('confirm-completion rating error:', e.message); }
+
     try {
       const { acceptedApp } = getJobParties(job, req.userId);
       if (acceptedApp) {
@@ -1251,9 +1295,14 @@ router.post('/:id/review', auth, async (req, res) => {
     };
 
     if (isPoster && reviewTarget === 'provider') {
+      if (job.posterReviewed) return res.status(400).json({ error: 'You already reviewed this job' });
       await prisma.job.update({ where: { id: job.id }, data: { posterReviewed: true, posterReview: review } });
+      const { acceptedApp } = getJobParties(job, req.userId);
+      if (acceptedApp) await applyRatingToUser(String(acceptedApp.applicantId), ratingNum);
     } else if (isProvider && reviewTarget === 'poster') {
+      if (job.providerReviewed) return res.status(400).json({ error: 'You already reviewed this job' });
       await prisma.job.update({ where: { id: job.id }, data: { providerReviewed: true, providerReview: review } });
+      await applyRatingToUser(String(job.posterId), ratingNum);
     } else {
       return res.status(403).json({ error: 'Not authorized for this review' });
     }
@@ -1359,6 +1408,9 @@ router.post('/:id/payment-handshake', auth, async (req, res) => {
         } catch (payErr) {
           console.error('Escrow release error:', payErr);
         }
+
+        // Completed job: bump counters (community) + firstJob star (identity)
+        bumpCompletionCounters(acceptedApplicantId, String(finalized.posterId)).catch(() => {});
 
         notify(req, finalized.posterId, {
           type: 'job_completed',
