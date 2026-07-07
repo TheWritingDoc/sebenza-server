@@ -737,11 +737,11 @@ function QRHandshakeModal({ jobId, userId, isPoster, onClose, onScanned, handsha
               }}>
                 {isPaymentMode
                   ? (mode === 'scan'
-                      ? '💰 Scan your neighbour\'s QR code to confirm payment and complete the job.'
-                      : '💰 Show your QR code so your neighbour can scan it to confirm payment.')
+                      ? '💰 Scan your neighbour\'s QR code to confirm payment — only ONE of you needs to scan.'
+                      : '💰 Show your QR code so your neighbour can scan it — only ONE scan is needed to confirm payment.')
                   : (mode === 'scan'
-                      ? 'Scan your neighbour\'s QR code to confirm you met in person and start the job.'
-                      : 'Show your QR code so your neighbour can scan it and start the job.')}
+                      ? 'Scan your neighbour\'s QR code to start the job — only ONE of you needs to scan.'
+                      : 'Show your QR code so your neighbour can scan it — only ONE scan is needed to start the job.')}
               </div>
             )}
 
@@ -932,58 +932,56 @@ function QRHandshakeModal({ jobId, userId, isPoster, onClose, onScanned, handsha
                       </div>
                     )}
 
-                    {/* Manual Complete fallback */}
-                    {isPaymentMode && (
-                      <>
-                        {!showManualConfirm ? (
+                    {/* Manual fallback — available in BOTH modes for when the camera misbehaves */}
+                    {!showManualConfirm ? (
+                      <button
+                        onClick={() => setShowManualConfirm(true)}
+                        style={{
+                          marginTop: 14, padding: '10px 20px', borderRadius: 12, border: '1.5px dashed #cbd5e1',
+                          background: '#f8fafc', color: '#64748b', fontSize: 12, fontWeight: 700,
+                          cursor: 'pointer', width: '100%',
+                        }}
+                      >
+                        {isPaymentMode ? '✋ Confirm Payment Manually (camera issues?)' : '✋ Start Job Manually (camera issues?)'}
+                      </button>
+                    ) : (
+                      <div style={{
+                        marginTop: 14, padding: 14, borderRadius: 14,
+                        background: '#fef2f2', border: '1.5px solid #fca5a5',
+                      }}>
+                        <div style={{ fontSize: 13, fontWeight: 700, color: '#991b1b', marginBottom: 8 }}>
+                          {isPaymentMode
+                            ? '⚠️ Manually confirm payment for this job?'
+                            : '⚠️ Manually confirm you\'ve met in person and start the job?'}
+                        </div>
+                        <div style={{ fontSize: 12, color: '#7f1d1d', marginBottom: 12 }}>
+                          This skips the QR scan. Only use it when the camera won't work.
+                        </div>
+                        <div style={{ display: 'flex', gap: 8 }}>
                           <button
-                            onClick={() => setShowManualConfirm(true)}
+                            onClick={handleManualComplete}
+                            disabled={submitting}
                             style={{
-                              marginTop: 14, padding: '10px 20px', borderRadius: 12, border: '1.5px dashed #cbd5e1',
-                              background: '#f8fafc', color: '#64748b', fontSize: 12, fontWeight: 700,
-                              cursor: 'pointer', width: '100%',
+                              flex: 1, padding: '10px', borderRadius: 10, border: 'none',
+                              fontSize: 13, fontWeight: 700, cursor: submitting ? 'not-allowed' : 'pointer',
+                              background: '#ef4444', color: 'white', opacity: submitting ? 0.6 : 1,
                             }}
                           >
-                            ✋ Mark Complete Manually
+                            {submitting ? '⏳ Confirming…' : (isPaymentMode ? 'Yes, Confirm Payment' : 'Yes, Start Job')}
                           </button>
-                        ) : (
-                          <div style={{
-                            marginTop: 14, padding: 14, borderRadius: 14,
-                            background: '#fef2f2', border: '1.5px solid #fca5a5',
-                          }}>
-                            <div style={{ fontSize: 13, fontWeight: 700, color: '#991b1b', marginBottom: 8 }}>
-                              ⚠️ Are you sure you want to manually mark this job as complete?
-                            </div>
-                            <div style={{ fontSize: 12, color: '#7f1d1d', marginBottom: 12 }}>
-                              This bypasses QR verification.
-                            </div>
-                            <div style={{ display: 'flex', gap: 8 }}>
-                              <button
-                                onClick={handleManualComplete}
-                                disabled={submitting}
-                                style={{
-                                  flex: 1, padding: '10px', borderRadius: 10, border: 'none',
-                                  fontSize: 13, fontWeight: 700, cursor: submitting ? 'not-allowed' : 'pointer',
-                                  background: '#ef4444', color: 'white', opacity: submitting ? 0.6 : 1,
-                                }}
-                              >
-                                {submitting ? '⏳ Confirming…' : 'Yes, Complete Manually'}
-                              </button>
-                              <button
-                                onClick={() => setShowManualConfirm(false)}
-                                disabled={submitting}
-                                style={{
-                                  padding: '10px 16px', borderRadius: 10, border: 'none',
-                                  fontSize: 13, fontWeight: 700, cursor: 'pointer',
-                                  background: '#f1f5f9', color: '#475569',
-                                }}
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </>
+                          <button
+                            onClick={() => setShowManualConfirm(false)}
+                            disabled={submitting}
+                            style={{
+                              padding: '10px 16px', borderRadius: 10, border: 'none',
+                              fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                              background: '#f1f5f9', color: '#475569',
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
                     )}
                   </div>
                 )}

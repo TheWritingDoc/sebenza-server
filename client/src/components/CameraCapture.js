@@ -51,20 +51,22 @@ async function getCurrentPosition(options = { enableHighAccuracy: true, timeout:
 function CameraCapture({ onCapture, onClose, multiple = false, enforceCamera = false }) {
   const videoRef = useRef(null);
   const fileInputRef = useRef(null);
+  const streamRef = useRef(null);
   const [stream, setStream] = useState(null);
   const [captured, setCaptured] = useState([]);
   const [error, setError] = useState('');
   const [showFallback, setShowFallback] = useState(false);
 
   const stopCamera = useCallback(() => {
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-      setStream(null);
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
     }
+    setStream(null);
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
-  }, [stream]);
+  }, []);
 
   const startCamera = useCallback(async () => {
     // Warm up the location permission early so the geo-tag is ready by capture
@@ -86,11 +88,9 @@ function CameraCapture({ onCapture, onClose, multiple = false, enforceCamera = f
         },
         audio: false
       });
+      streamRef.current = mediaStream;
       setStream(mediaStream);
       setShowFallback(false);
-      if (videoRef.current) {
-        videoRef.current.srcObject = mediaStream;
-      }
     } catch (err) {
       console.error('Camera start error:', err);
       setShowFallback(true);
@@ -101,6 +101,16 @@ function CameraCapture({ onCapture, onClose, multiple = false, enforceCamera = f
       }
     }
   }, []);
+
+  // Attach the stream AFTER the <video> mounts. It renders conditionally on
+  // `stream`, so assigning srcObject inside startCamera hits a null ref and
+  // leaves a black screen until the camera is reopened.
+  useEffect(() => {
+    if (stream && videoRef.current) {
+      videoRef.current.srcObject = stream;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [stream]);
 
   const finalize = useCallback(async (files) => {
     const geo = await getCurrentPosition();
@@ -144,13 +154,16 @@ function CameraCapture({ onCapture, onClose, multiple = false, enforceCamera = f
     onClose();
   }, [multiple, captured, onCapture, onClose, stopCamera]);
 
-  // Start camera automatically on desktop; on mobile wait for user action to avoid permission spam
+  // Start camera automatically on desktop; on mobile wait for user action to
+  // avoid permission spam. Mount-only: re-running this on state changes used to
+  // stop/restart the stream in a loop, forcing users to reopen the camera.
   useEffect(() => {
     if (!isMobile()) {
       startCamera();
     }
     return () => stopCamera();
-  }, [startCamera, stopCamera]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (error) {
     return (
@@ -164,7 +177,9 @@ function CameraCapture({ onCapture, onClose, multiple = false, enforceCamera = f
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'black', zIndex: 10000, display: 'flex', flexDirection: 'column' }}>
+    // zIndex above every app surface (WorkHub footer is 10021, notifications
+    // 10072) so nothing overlaps the live camera.
+    <div style={{ position: 'fixed', inset: 0, background: 'black', zIndex: 100000, display: 'flex', flexDirection: 'column' }}>
       <input
         ref={fileInputRef}
         type="file"

@@ -918,10 +918,10 @@ function JobBoard({ user, onViewPortfolio }) {
     window.open(url, '_blank');
   };
 
-  const handleQRScanned = async ({ jobId: scannedJobId, scannedUserId }) => {
+  const handleQRScanned = async ({ jobId: scannedJobId, scannedUserId, manual }) => {
     const url = `${API_URL}/api/jobs/${scannedJobId}/qr-handshake`;
     try {
-      const res = await axios.post(url, { scannedUserId }, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await axios.post(url, { scannedUserId, manual }, { headers: { Authorization: `Bearer ${token}` } });
       // Silent refresh so both parties see the latest state
       await fetchMyJobs();
       await fetchMyApplications();

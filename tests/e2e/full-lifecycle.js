@@ -139,17 +139,16 @@ async function runLifecycle(paymentMethod) {
   r = await api('GET', `/api/jobs/${jobId}`, { token: poster.token });
   expect(r.data?.status === 'accepted', 'job status = accepted', `status=${r.data?.status}`);
 
-  phase('7. QR handshake / on-site induction (both parties scan)');
+  phase('7. QR handshake / on-site induction (single scan starts the job)');
   r = await api('POST', `/api/jobs/${jobId}/qr-handshake`, {
     token: helper.token, body: { scannedUserId: poster.id, lat: JOB_LAT, lng: JOB_LNG }
   });
-  expect(r.status === 200 && r.data?.awaitingOther === true, 'helper scans first — awaiting poster', JSON.stringify(r.data));
+  expect(r.status === 200 && r.data?.jobStarted === true, 'ONE scan starts the job', JSON.stringify(r.data));
   r = await api('POST', `/api/jobs/${jobId}/qr-handshake`, {
     token: poster.token, body: { scannedUserId: helper.id, lat: JOB_LAT, lng: JOB_LNG }
   });
-  expect(r.status === 200 && r.data?.jobStarted === true, 'poster scans — job starts', JSON.stringify(r.data));
+  expect(r.status === 200 && r.data?.jobStarted === true, 'second scan is idempotent (already started)', JSON.stringify(r.data));
 
-  // proximity guard sanity: too-far scan must fail on a fresh job
   r = await api('GET', `/api/jobs/${jobId}`, { token: poster.token });
   expect(r.data?.status === 'in_progress', 'job status = in_progress', `status=${r.data?.status}`);
 
@@ -221,15 +220,15 @@ async function runLifecycle(paymentMethod) {
   r = await api('GET', `/api/jobs/${jobId}`, { token: poster.token });
   expect(r.data?.status === 'pending_payment', 'job status = pending_payment', `status=${r.data?.status}`);
 
-  phase('11. Payment handshake via QR (both parties, proximity-checked)');
-  r = await api('POST', `/api/jobs/${jobId}/payment-handshake`, {
-    token: poster.token, body: { lat: JOB_LAT, lng: JOB_LNG }
-  });
-  expect(r.status === 200 && r.data?.paymentConfirmed === false, 'poster confirms payment — awaiting helper', JSON.stringify(r.data));
+  phase('11. Payment handshake via QR (single scan finalizes)');
   r = await api('POST', `/api/jobs/${jobId}/payment-handshake`, {
     token: helper.token, body: { lat: JOB_LAT, lng: JOB_LNG }
   });
-  expect(r.status === 200 && r.data?.paymentConfirmed === true, 'helper confirms — payment finalized', JSON.stringify(r.data));
+  expect(r.status === 200 && r.data?.paymentConfirmed === true, 'ONE scan confirms payment and completes the job', JSON.stringify(r.data));
+  r = await api('POST', `/api/jobs/${jobId}/payment-handshake`, {
+    token: poster.token, body: { lat: JOB_LAT, lng: JOB_LNG }
+  });
+  expect(r.status === 200 && r.data?.paymentConfirmed === true, 'second confirm is idempotent (already completed)', JSON.stringify(r.data));
 
   r = await api('GET', `/api/jobs/${jobId}`, { token: poster.token });
   expect(r.data?.status === 'completed', 'job status = completed', `status=${r.data?.status}`);
@@ -253,7 +252,7 @@ async function runLifecycle(paymentMethod) {
 
   phase('13. Guard-rail spot checks');
   r = await api('POST', `/api/jobs/${jobId}/payment-handshake`, { token: poster.token, body: {} });
-  expect(r.status === 400, 'payment-handshake rejected after completion', `status=${r.status}`);
+  expect(r.status === 200 && r.data?.paymentConfirmed === true, 'payment-handshake idempotent after completion', `status=${r.status} ${JSON.stringify(r.data)}`);
   r = await api('POST', `/api/jobs/${jobId}/apply`, { token: helper.token, body: { proposedAmount: 100 } });
   expect(r.status === 400, 'cannot apply to a completed job', `status=${r.status}`);
   r = await api('POST', `/api/jobs/${jobId}/review`, { token: helper.token, body: { rating: 1, target: 'poster' } });
@@ -296,6 +295,26 @@ async function proximityGuardCheck() {
     files: [{ field: 'photos', name: 'x.png', data: TINY_PNG }]
   });
   expect(r.status === 403, 'stranger cannot upload proof', `status=${r.status}`);
+
+  // manual fallback: starts the job even when the camera/GPS can't be used
+  r = await api('POST', `/api/jobs/${jobId}/qr-handshake`, {
+    token: helper.token, body: { manual: true, lat: JOB_LAT + 0.05, lng: JOB_LNG }
+  });
+  expect(r.status === 200 && r.data?.jobStarted === true, 'manual start works without proximity', JSON.stringify(r.data));
+
+  // manual payment fallback on the same job
+  await api('POST', `/api/jobs/${jobId}/complete`, {
+    token: helper.token, body: {},
+    files: [{ field: 'photos', name: 'after.png', data: TINY_PNG }]
+  });
+  await api('POST', `/api/jobs/${jobId}/confirm-completion`, {
+    token: poster.token, body: { rating: 5 },
+    files: [{ field: 'photos', name: 'insp.png', data: TINY_PNG }]
+  });
+  r = await api('POST', `/api/jobs/${jobId}/payment-handshake`, {
+    token: helper.token, body: { manual: true }
+  });
+  expect(r.status === 200 && r.data?.paymentConfirmed === true, 'manual payment confirm works (helper)', JSON.stringify(r.data));
 }
 
 async function cleanup() {

@@ -1292,19 +1292,26 @@ router.post('/:id/review', auth, async (req, res) => {
 router.post('/:id/payment-handshake', auth, async (req, res) => {
   try {
     if (!isId(req.params.id)) return res.status(404).json({ error: 'Job not found' });
-    const { lat, lng } = req.body;
+    const { lat, lng, manual } = req.body;
     const job = await prisma.job.findUnique({
       where: { id: req.params.id },
       include: { applications: { select: { id: true, applicantId: true } } }
     });
     if (!job) return res.status(404).json({ error: 'Job not found' });
-    if (job.status !== 'pending_payment') return res.status(400).json({ error: `Cannot handshake: job is ${job.status}` });
 
     const { isPoster, isProvider, acceptedApplicantId } = getJobParties(job, req.userId);
     if (!isPoster && !isProvider) return res.status(403).json({ error: 'Not authorized' });
 
-    // ── QR Proximity check ──
-    if (lat !== undefined && lng !== undefined) {
+    if (job.status !== 'pending_payment') {
+      // Idempotent: the other party's single scan already finalized it.
+      if (job.status === 'completed' && job.paymentConfirmed) {
+        return res.json({ message: 'Payment already confirmed. Job completed.', paymentConfirmed: true });
+      }
+      return res.status(400).json({ error: `Cannot handshake: job is ${job.status}` });
+    }
+
+    // ── QR Proximity check (skipped for manual confirmation) ──
+    if (!manual && lat !== undefined && lng !== undefined) {
       const latNum = parseFloat(lat);
       const lngNum = parseFloat(lng);
       if (!isNaN(latNum) && !isNaN(lngNum) && job.lat != null && job.lng != null) {
@@ -1315,99 +1322,96 @@ router.post('/:id/payment-handshake', auth, async (req, res) => {
       }
     }
 
-    // ── Idempotency: both parties must confirm ──
-    const alreadyConfirmed = (job.paymentConfirmedBy || []).map(String);
-    if (alreadyConfirmed.includes(String(req.userId))) {
-      return res.json({ message: 'Payment already confirmed by you', awaitingOther: alreadyConfirmed.length < 2 });
-    }
-
-    // Atomic array append guarded against duplicates (Mongo $addToSet
-    // equivalent): only appends while pending_payment and not yet present.
-    const latNum = lat !== undefined ? parseFloat(lat) : null;
-    const lngNum = lng !== undefined ? parseFloat(lng) : null;
-    const logEntry = JSON.stringify([{
-      event: 'payment_confirmed',
-      posterLocation: isPoster ? { lat: latNum, lng: lngNum } : undefined,
-      providerLocation: isProvider ? { lat: latNum, lng: lngNum } : undefined,
-      triggeredAt: new Date()
-    }]);
-    const appended = await prisma.$executeRaw`
-      UPDATE jobs
-      SET payment_confirmed_by = array_append(payment_confirmed_by, ${req.userId}::uuid),
-          handshake_log = handshake_log || ${logEntry}::jsonb
-      WHERE id = ${req.params.id}::uuid
-        AND status = 'pending_payment'
-        AND NOT (payment_confirmed_by @> ARRAY[${req.userId}::uuid])`;
-    if (appended === 0) {
-      // Either no longer pending_payment, or a concurrent duplicate.
-      const fresh = await prisma.job.findUnique({ where: { id: job.id }, select: { status: true, paymentConfirmedBy: true } });
-      if (fresh && fresh.status === 'pending_payment' && (fresh.paymentConfirmedBy || []).map(String).includes(String(req.userId))) {
-        return res.json({ message: 'Payment already confirmed by you', awaitingOther: fresh.paymentConfirmedBy.length < 2 });
+    // Single-scan payment: ONE confirmation from either party (QR scan or the
+    // manual fallback) finalizes the job. Guarded flip — exactly one request
+    // wins and moves the money; the loser gets the idempotent response.
+    const finalizedGuard = await prisma.job.updateMany({
+      where: { id: job.id, status: 'pending_payment' },
+      data: {
+        paymentConfirmed: true,
+        paymentConfirmedAt: new Date(),
+        status: 'completed',
+        completedAt: new Date()
+      }
+    });
+    if (finalizedGuard.count === 0) {
+      const fresh = await prisma.job.findUnique({ where: { id: job.id }, select: { status: true } });
+      if (fresh?.status === 'completed') {
+        return res.json({ message: 'Payment already confirmed. Job completed.', paymentConfirmed: true });
       }
       return res.status(400).json({ error: 'Job is no longer awaiting payment' });
     }
 
-    const updated = await prisma.job.findUnique({ where: { id: job.id }, select: { paymentConfirmedBy: true } });
+    // Audit trail (non-critical).
+    const latNum = lat !== undefined ? parseFloat(lat) : null;
+    const lngNum = lng !== undefined ? parseFloat(lng) : null;
+    const logEntry = JSON.stringify([{
+      event: 'payment_confirmed',
+      confirmedBy: req.userId,
+      method: manual ? 'manual' : 'qr_scan',
+      posterLocation: isPoster ? { lat: latNum, lng: lngNum } : undefined,
+      providerLocation: isProvider ? { lat: latNum, lng: lngNum } : undefined,
+      triggeredAt: new Date()
+    }]);
+    try {
+      await prisma.$executeRaw`
+        UPDATE jobs
+        SET payment_confirmed_by = array_append(payment_confirmed_by, ${req.userId}::uuid),
+            handshake_log = handshake_log || ${logEntry}::jsonb
+        WHERE id = ${req.params.id}::uuid`;
+    } catch (logErr) {
+      console.error('Payment handshake log error:', logErr.message);
+    }
 
-    let bothConfirmed = false;
-    if ((updated?.paymentConfirmedBy || []).length >= 2) {
-      // Guarded finalize: exactly one request wins and moves the money.
-      const finalizedGuard = await prisma.job.updateMany({
-        where: { id: job.id, status: 'pending_payment' },
-        data: {
-          paymentConfirmed: true,
-          paymentConfirmedAt: new Date(),
-          status: 'completed',
-          completedAt: new Date()
+    const finalized = await prisma.job.findUnique({ where: { id: job.id } });
+    try {
+      const transaction = finalized.transactionId
+        ? await prisma.transaction.findUnique({ where: { id: finalized.transactionId } })
+        : await prisma.transaction.findFirst({ where: { jobId: finalized.id, status: { in: ['in_progress', 'accepted', 'pending'] } } });
+      if (transaction) {
+        if (transaction.paymentMethod === 'escrow') {
+          await releaseEscrow(transaction);
+        } else {
+          // Cash: money changed hands in person — just close the record.
+          await prisma.transaction.update({ where: { id: transaction.id }, data: { status: 'completed', completedAt: new Date() } });
         }
-      });
-      bothConfirmed = true;
-
-      if (finalizedGuard.count > 0) {
-        const finalized = await prisma.job.findUnique({ where: { id: job.id } });
-        try {
-          const transaction = finalized.transactionId
-            ? await prisma.transaction.findUnique({ where: { id: finalized.transactionId } })
-            : await prisma.transaction.findFirst({ where: { jobId: finalized.id, status: { in: ['in_progress', 'accepted', 'pending'] } } });
-          if (transaction) {
-            if (transaction.paymentMethod === 'escrow') {
-              await releaseEscrow(transaction);
-            } else {
-              // Cash: money changed hands in person — just close the record.
-              await prisma.transaction.update({ where: { id: transaction.id }, data: { status: 'completed', completedAt: new Date() } });
-            }
-          } else {
-            console.error(`Payment handshake: no transaction found for job ${finalized.id} — funds not moved`);
-          }
-        } catch (payErr) {
-          console.error('Escrow release error:', payErr);
-        }
-
-        // Completed job: bump counters (community) + firstJob star (identity)
-        bumpCompletionCounters(acceptedApplicantId, String(finalized.posterId)).catch(() => {});
-
-        notify(req, finalized.posterId, {
-          type: 'job_completed',
-          title: 'Job Completed ✅',
-          message: `"${finalized.title}" is done — payment confirmed by both parties.`,
-          jobId: finalized.id
-        });
-        if (acceptedApplicantId) {
-          notify(req, acceptedApplicantId, {
-            type: 'job_completed',
-            title: finalized.paymentMethod === 'escrow' ? 'Payment Released 💰' : 'Job Completed ✅',
-            message: finalized.paymentMethod === 'escrow'
-              ? `Escrow for "${finalized.title}" has been released to your balance.`
-              : `"${finalized.title}" is complete. Don't forget to leave a review!`,
-            jobId: finalized.id
-          });
-        }
+      } else {
+        console.error(`Payment handshake: no transaction found for job ${finalized.id} — funds not moved`);
       }
+    } catch (payErr) {
+      console.error('Escrow release error:', payErr);
+    }
+
+    // Completed job: bump counters (community) + firstJob star (identity)
+    bumpCompletionCounters(acceptedApplicantId, String(finalized.posterId)).catch(() => {});
+
+    const io = req.app.get('io');
+    io.to(`job_${job.id}`).emit('payment_confirmed', {
+      jobId: String(job.id),
+      confirmed: true,
+      message: 'Payment confirmed. Job completed.'
+    });
+
+    notify(req, finalized.posterId, {
+      type: 'job_completed',
+      title: 'Job Completed ✅',
+      message: `"${finalized.title}" is done — payment confirmed.`,
+      jobId: finalized.id
+    });
+    if (acceptedApplicantId) {
+      notify(req, acceptedApplicantId, {
+        type: 'job_completed',
+        title: finalized.paymentMethod === 'escrow' ? 'Payment Released 💰' : 'Job Completed ✅',
+        message: finalized.paymentMethod === 'escrow'
+          ? `Escrow for "${finalized.title}" has been released to your balance.`
+          : `"${finalized.title}" is complete. Don't forget to leave a review!`,
+        jobId: finalized.id
+      });
     }
 
     res.json({
-      message: bothConfirmed ? 'Payment confirmed by both parties. Job completed.' : 'Payment confirmation recorded. Awaiting other party.',
-      paymentConfirmed: bothConfirmed
+      message: 'Payment confirmed. Job completed.',
+      paymentConfirmed: true
     });
   } catch (err) {
     console.error('Payment handshake error:', err);
@@ -1492,6 +1496,10 @@ router.post('/:id/qr-handshake', auth, async (req, res) => {
     if (!isPoster && !isProvider) return res.status(403).json({ error: 'Not authorized' });
 
     if (job.status !== 'accepted') {
+      // Idempotent: the other party's single scan already started it.
+      if (job.status === 'in_progress') {
+        return res.json({ message: 'Job already started.', status: 'in_progress', jobStarted: true, awaitingOther: false });
+      }
       return res.status(400).json({ error: `Cannot start: job is ${job.status}` });
     }
 
@@ -1503,91 +1511,70 @@ router.post('/:id/qr-handshake', auth, async (req, res) => {
       }
     }
 
-    const qrConfirmedBy = (job.qrConfirmedBy || []).map(String);
-    if (qrConfirmedBy.includes(String(req.userId))) {
-      return res.json({ message: 'QR handshake already recorded by you', awaitingOther: qrConfirmedBy.length < 2 });
+    // Single-scan start: ONE scan from either party (or a manual confirm when
+    // the camera won't cooperate) starts the job. The guarded flip means only
+    // the first request wins; concurrent scans get the idempotent response.
+    const otherUserId = isPoster ? acceptedApplicantId : String(job.posterId);
+    const startedAt = new Date();
+    const startGuard = await prisma.job.updateMany({
+      where: { id: job.id, status: 'accepted' },
+      data: { status: 'in_progress', startedAt }
+    });
+    if (startGuard.count === 0) {
+      return res.json({ message: 'Job already started.', status: 'in_progress', jobStarted: true, awaitingOther: false });
     }
 
-    // Atomic guarded append (same pattern as payment-handshake).
-    const otherUserId = isPoster ? acceptedApplicantId : String(job.posterId);
+    // Record who confirmed and how (audit trail; non-critical).
     const scanEntry = JSON.stringify([{
       scannerId: req.userId,
       scannedId: scannedUserId || otherUserId,
       method: manual ? 'manual' : 'qr_scan',
-      scannedAt: new Date()
+      scannedAt: startedAt
     }]);
-    const appended = await prisma.$executeRaw`
-      UPDATE jobs
-      SET qr_confirmed_by = array_append(qr_confirmed_by, ${req.userId}::uuid),
-          qr_handshakes = qr_handshakes || ${scanEntry}::jsonb
-      WHERE id = ${req.params.id}::uuid
-        AND status = 'accepted'
-        AND NOT (qr_confirmed_by @> ARRAY[${req.userId}::uuid])`;
-    if (appended === 0) {
-      return res.json({ message: 'QR handshake already recorded by you', awaitingOther: true });
+    try {
+      await prisma.$executeRaw`
+        UPDATE jobs
+        SET qr_confirmed_by = array_append(qr_confirmed_by, ${req.userId}::uuid),
+            qr_handshakes = qr_handshakes || ${scanEntry}::jsonb
+        WHERE id = ${req.params.id}::uuid`;
+    } catch (logErr) {
+      console.error('QR handshake log error:', logErr.message);
     }
-
-    const fresh = await prisma.job.findUnique({ where: { id: job.id }, select: { qrConfirmedBy: true } });
-    const confirmedCount = (fresh?.qrConfirmedBy || []).length;
 
     const io = req.app.get('io');
     const room = `job_${job.id}`;
     io.to(room).emit('device_handshake_complete', {
       jobId: String(job.id),
       confirmedBy: req.userId,
-      awaitingOther: confirmedCount < 2
+      jobStarted: true,
+      awaitingOther: false
+    });
+    io.to(room).emit('job_started', {
+      jobId: String(job.id),
+      title: job.title,
+      startedAt
     });
 
-    let jobStarted = false;
-    let startedAt = null;
-
-    if (confirmedCount >= 2) {
-      // Guarded start: exactly one request flips accepted → in_progress.
-      startedAt = new Date();
-      const startGuard = await prisma.job.updateMany({
-        where: { id: job.id, status: 'accepted' },
-        data: { status: 'in_progress', startedAt }
-      });
-      jobStarted = true;
-
-      if (startGuard.count > 0) {
-        io.to(room).emit('job_started', {
-          jobId: String(job.id),
-          title: job.title,
-          startedAt
-        });
-
-        notify(req, job.posterId, {
-          type: 'job_started',
-          title: 'Job Started 🚀',
-          message: `"${job.title}" has started! Track it in your Active jobs.`,
-          jobId: job.id
-        });
-        if (otherUserId) {
-          notify(req, otherUserId, {
-            type: 'job_started',
-            title: 'Job Started 🚀',
-            message: `"${job.title}" has started! Track it in your Active jobs.`,
-            jobId: job.id
-          });
-        }
-      }
-    } else if (otherUserId) {
+    notify(req, job.posterId, {
+      type: 'job_started',
+      title: 'Job Started 🚀',
+      message: `"${job.title}" has started! Track it in your Active jobs.`,
+      jobId: job.id
+    });
+    if (otherUserId) {
       notify(req, otherUserId, {
-        type: 'qr_handshake_ready',
-        title: 'QR Handshake Waiting 📱',
-        message: `The other party scanned your QR for "${job.title}". Please scan theirs to start the job.`,
+        type: 'job_started',
+        title: 'Job Started 🚀',
+        message: `"${job.title}" has started! Track it in your Active jobs.`,
         jobId: job.id
       });
     }
 
     res.json({
-      message: jobStarted
-        ? 'Job started! Both parties confirmed.'
-        : 'QR handshake recorded. Awaiting other party.',
-      status: jobStarted ? 'in_progress' : job.status,
-      jobStarted,
-      awaitingOther: !jobStarted
+      message: 'Job started!',
+      status: 'in_progress',
+      jobStarted: true,
+      awaitingOther: false
     });
   } catch (err) {
     console.error('QR handshake error:', err);
