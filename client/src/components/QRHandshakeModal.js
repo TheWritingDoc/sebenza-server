@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import { Html5Qrcode } from 'html5-qrcode';
 import { modalOverlayStyle, modalContentStyle } from '../shared/constants';
 import { scrollToRef } from '../shared/workflowFocus';
+import useBodyScrollLock from '../shared/useBodyScrollLock';
 import { socket } from '../App';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
@@ -219,6 +220,7 @@ function SpinnerOverlay() {
 }
 
 function QRHandshakeModal({ jobId, userId, isPoster, onClose, onScanned, handshakeMode = 'start', job }) {
+  useBodyScrollLock();
   const isPaymentMode = handshakeMode === 'payment';
   const theme = isPaymentMode ? themes.payment : themes.start;
 

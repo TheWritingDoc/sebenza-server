@@ -13,6 +13,7 @@ import JobCompleteWorkflow from './JobCompleteWorkflow';
 import { PLACEHOLDER_IMG, getImageUrl, categoryEmojis, categoryGradients, statusBadge, modalOverlayStyle, modalContentStyle, MAX_NEGOTIATION_ROUNDS } from '../shared/constants';
 import { scrollToRef, blurActiveInput, mobileFieldFocusScroll } from '../shared/workflowFocus';
 import { Briefcase, ClipboardList, Handshake, Plus, Eye, Users, Banknote, Clock, MessageCircle, ArrowRight } from './Icons';
+import useBodyScrollLock from '../shared/useBodyScrollLock';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -113,6 +114,13 @@ function JobBoard({ user, onViewPortfolio }) {
   const [counterSubmittingJobId, setCounterSubmittingJobId] = useState(null);
   const [decliningApprovalJobId, setDecliningApprovalJobId] = useState(null);
   const [confirmingCompletion, setConfirmingCompletion] = useState(false);
+
+  // Lock background scroll while any JobBoard overlay is open
+  useBodyScrollLock(!!(
+    viewingJob || workHubOpen || completingJob || confirmingJob || qrHandshakeJob ||
+    paymentHandshakeJob || viewingCompletionSummary || workflowAlert || showGallery ||
+    postingJob || applyingJob || viewingApplicants
+  ));
 
   // Mobile detection for responsive modal layouts
   const [isMobile, setIsMobile] = useState(window.innerWidth <= 640);
@@ -329,9 +337,13 @@ function JobBoard({ user, onViewPortfolio }) {
   }, [isLoggedIn, token, handleAuthError, showMsg]);
 
   const silentRefresh = useCallback(async (jobId) => {
-    try { await fetchMyJobs(); } catch (e) {}
-    try { await fetchMyApplications(); } catch (e) {}
-    try { await fetchJobs(); } catch (e) {}
+    // Parallel — these are independent list fetches; sequential awaits made
+    // every socket/notification refresh 3x slower.
+    await Promise.all([
+      fetchMyJobs().catch(() => {}),
+      fetchMyApplications().catch(() => {}),
+      fetchJobs().catch(() => {})
+    ]);
     const vj = viewingJobRef.current;
     if (vj && (!jobId || vj._id === jobId)) {
       try {
@@ -414,9 +426,11 @@ function JobBoard({ user, onViewPortfolio }) {
     const onRefreshJobs = async (e) => {
       if (!isLoggedIn) return;
       const jobId = e.detail?.jobId;
-      try { await fetchMyJobs(); } catch (err) {}
-      try { await fetchMyApplications(); } catch (err) {}
-      try { await fetchJobs(); } catch (err) {}
+      await Promise.all([
+        fetchMyJobs().catch(() => {}),
+        fetchMyApplications().catch(() => {}),
+        fetchJobs().catch(() => {})
+      ]);
       // If a detail view is open for this job, refresh it too
       const vj = viewingJobRef.current;
       if (vj && (!jobId || vj._id === jobId)) {
@@ -432,6 +446,31 @@ function JobBoard({ user, onViewPortfolio }) {
     window.addEventListener('sebenza:refresh-jobs', onRefreshJobs);
     return () => window.removeEventListener('sebenza:refresh-jobs', onRefreshJobs);
   }, [isLoggedIn, fetchMyJobs, fetchMyApplications, fetchJobs, token]);
+
+  // ── Auto-open QR: when the next step is a QR scan, both devices open the
+  // QR screen automatically (dispatched by NotificationSystem). ──
+  useEffect(() => {
+    const onAutoQR = async (e) => {
+      if (!isLoggedIn) return;
+      const { jobId, mode } = e.detail || {};
+      if (!jobId) return;
+      try {
+        const res = await axios.get(`${API_URL}/api/jobs/${jobId}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+        const job = res.data;
+        if (!job) return;
+        if (mode === 'start' && job.status === 'accepted') {
+          setViewingJob(job);
+          setQrHandshakeJob(job);
+        } else if (mode === 'payment' && job.status === 'pending_payment') {
+          setViewingJob(job);
+          openPaymentQR(job);
+        }
+      } catch (err) { /* non-blocking */ }
+    };
+    window.addEventListener('sebenza:auto-qr', onAutoQR);
+    return () => window.removeEventListener('sebenza:auto-qr', onAutoQR);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoggedIn, token]);
 
   // ── Page visibility refresh: when user returns to the app, fetch fresh data ──
   useEffect(() => {
@@ -823,7 +862,7 @@ function JobBoard({ user, onViewPortfolio }) {
       const shownKey = `payment_popup_${pendingPaymentJob._id}`;
       if (!sessionStorage.getItem(shownKey)) {
         sessionStorage.setItem(shownKey, '1');
-        setPaymentHandshakeJob(pendingPaymentJob);
+        openPaymentQR(pendingPaymentJob);
       }
     }
   }, [myJobs, myApplications, userId, paymentHandshakeJob, viewingJob?._id, workHubOpen]);
@@ -1173,7 +1212,7 @@ function JobBoard({ user, onViewPortfolio }) {
     try {
       await axios.post(`${API_URL}/api/jobs/${jobId}/cancel`, {}, { headers: { Authorization: `Bearer ${token}` } });
       showMsg('Job cancelled.');
-      await fetchMyJobs(); await fetchMyApplications(); await fetchJobs();
+      await Promise.all([fetchMyJobs(), fetchMyApplications(), fetchJobs()]);
     } catch (err) {
       showMsg(err.response?.data?.error || 'Failed to cancel');
     } finally {
@@ -1187,7 +1226,7 @@ function JobBoard({ user, onViewPortfolio }) {
       await axios.post(`${API_URL}/api/jobs/${jobId}/applications/${appId}/withdraw`, {}, { headers: { Authorization: `Bearer ${token}` } });
       showMsg('Application withdrawn.');
       if (viewingJob?._id === jobId) setViewingJob(null);
-      await fetchMyJobs(); await fetchMyApplications(); await fetchJobs();
+      await Promise.all([fetchMyJobs(), fetchMyApplications(), fetchJobs()]);
     } catch (err) {
       showMsg(err.response?.data?.error || 'Failed to withdraw');
     } finally {
@@ -1213,7 +1252,7 @@ function JobBoard({ user, onViewPortfolio }) {
         body: 'Great. Next step: QR handshake to start the job (only one of you needs to scan).'
       });
       setActiveTab('browse');
-      await fetchMyJobs(); await fetchMyApplications(); await fetchJobs();
+      await Promise.all([fetchMyJobs(), fetchMyApplications(), fetchJobs()]);
       if (viewingJob?._id === jobId) {
         try {
           const res = await axios.get(`${API_URL}/api/jobs/${jobId}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
@@ -1246,7 +1285,7 @@ function JobBoard({ user, onViewPortfolio }) {
       });
       setActiveTab('browse');
       if (viewingJob?._id === jobId) setViewingJob(null);
-      await fetchMyJobs(); await fetchMyApplications(); await fetchJobs();
+      await Promise.all([fetchMyJobs(), fetchMyApplications(), fetchJobs()]);
     } catch (err) {
       showMsg(err.response?.data?.error || 'Failed to reject offer');
     } finally {
@@ -1271,13 +1310,13 @@ function JobBoard({ user, onViewPortfolio }) {
       setApplicantCounterTime('');
       setApplicantCounterMessage('');
       if (viewingJob?._id === jobId) setViewingJob(null);
-      await fetchMyJobs(); await fetchMyApplications(); await fetchJobs();
+      await Promise.all([fetchMyJobs(), fetchMyApplications(), fetchJobs()]);
     } catch (err) {
       const errData = err.response?.data;
       if (errData?.autoRejected) {
         showMsg('⚠️ ' + (errData.error || 'Offer auto-declined after max rounds.'));
         if (viewingJob?._id === jobId) setViewingJob(null);
-        await fetchMyJobs(); await fetchMyApplications(); await fetchJobs();
+        await Promise.all([fetchMyJobs(), fetchMyApplications(), fetchJobs()]);
       } else {
         showMsg(errData?.error || 'Failed to send counter offer');
       }
@@ -1340,6 +1379,22 @@ function JobBoard({ user, onViewPortfolio }) {
     setCompletionPhotos([]);
   };
 
+  // Rating-first payment gate: both parties rate each other BEFORE confirming
+  // payment. If this user hasn't rated yet, route them to the rating card
+  // instead of the payment QR.
+  const openPaymentQR = (job) => {
+    const iAmPoster = isPosterForJob(job);
+    const iHaveRated = iAmPoster ? job.posterReviewed : job.providerReviewed;
+    if (!iHaveRated) {
+      setViewingJob(job);
+      setWorkHubOpen(true);
+      setWorkHubTab('complete');
+      showMsg(`⭐ Rate the ${iAmPoster ? 'helper' : 'job provider'} first — then confirm payment.`);
+      return;
+    }
+    setPaymentHandshakeJob(job);
+  };
+
   // Post-job mutual rating: whichever party hasn't rated yet submits here
   // (poster rates the helper, helper rates the poster).
   const handleSubmitJobRating = async (job) => {
@@ -1356,9 +1411,13 @@ function JobBoard({ user, onViewPortfolio }) {
       setMyJobRating(5);
       try {
         const res = await axios.get(`${API_URL}/api/jobs/${job._id}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-        if (res.data) setViewingJob(res.data);
+        if (res.data) {
+          setViewingJob(res.data);
+          // Rating done — if payment confirmation is the next step, go straight to the QR.
+          if (res.data.status === 'pending_payment') setPaymentHandshakeJob(res.data);
+        }
       } catch (_) { /* list refresh below still updates cards */ }
-      await fetchMyJobs(); await fetchMyApplications();
+      await Promise.all([fetchMyJobs(), fetchMyApplications()]);
     } catch (err) {
       showMsg(err.response?.data?.error || 'Failed to submit rating');
     } finally {
@@ -1374,7 +1433,7 @@ function JobBoard({ user, onViewPortfolio }) {
       showMsg(typeof pingCount === 'number'
         ? `🔔 Doorbell rung (${pingCount}/3). The other party has been notified.`
         : '🔔 Ping sent! The other party has been notified.');
-      await fetchMyJobs(); await fetchMyApplications(); await fetchJobs();
+      await Promise.all([fetchMyJobs(), fetchMyApplications(), fetchJobs()]);
     } catch (err) {
       showMsg(err.response?.data?.error || 'Failed to send ping');
     } finally {
@@ -1408,7 +1467,7 @@ function JobBoard({ user, onViewPortfolio }) {
         setViewingJob(res.data.job);
         autoRouteWorkHub(res.data.job, 'issue_reported');
       }
-      await fetchMyJobs(); await fetchMyApplications(); await fetchJobs();
+      await Promise.all([fetchMyJobs(), fetchMyApplications(), fetchJobs()]);
       if (viewingJobRef.current?._id === jobId) {
         try {
           const latest = await axios.get(`${API_URL}/api/jobs/${jobId}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
@@ -1443,7 +1502,7 @@ function JobBoard({ user, onViewPortfolio }) {
       showMsg(res?.data?.message || 'Work proof uploaded.');
       setProofPhotos([]);
       setProofNote('');
-      await fetchMyJobs(); await fetchMyApplications(); await fetchJobs();
+      await Promise.all([fetchMyJobs(), fetchMyApplications(), fetchJobs()]);
       if (viewingJobRef.current?._id === jobId) {
         const latest = await axios.get(`${API_URL}/api/jobs/${jobId}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
         if (latest?.data) setViewingJob(latest.data);
@@ -1473,7 +1532,7 @@ function JobBoard({ user, onViewPortfolio }) {
       setStopReason('');
       setStopPhotos([]);
       setWorkHubOpen(false);
-      await fetchMyJobs(); await fetchMyApplications(); await fetchJobs();
+      await Promise.all([fetchMyJobs(), fetchMyApplications(), fetchJobs()]);
       navigate('/jobs', { replace: true });
     } catch (err) {
       showMsg(err.response?.data?.error || 'Failed to stop job');
@@ -1594,13 +1653,24 @@ function JobBoard({ user, onViewPortfolio }) {
       await axios.post(`${API_URL}/api/jobs/${confirmingJob._id}/confirm-completion`, formData, {
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'multipart/form-data' }
       });
-      showMsg('Job completion confirmed!');
+      showMsg('Job completion confirmed! Next: scan the QR code to confirm payment.');
+      const confirmedJobId = confirmingJob._id;
       setConfirmingJob(null);
       setConfirmPhotos([]);
       setConfirmCategories({ punctuality: 5, quality: 5, communication: 5, respect: 5 });
       setConfirmComment('');
-      if (viewingJob?._id === confirmingJob._id) setViewingJob(null);
-      await fetchMyJobs(); await fetchMyApplications(); await fetchJobs();
+      await Promise.all([fetchMyJobs(), fetchMyApplications(), fetchJobs()]);
+      // Payment QR is the next step — open it right away on this device
+      // (the helper's device auto-opens via the job_pending_payment notification).
+      try {
+        const fresh = await axios.get(`${API_URL}/api/jobs/${confirmedJobId}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+        if (fresh.data?.status === 'pending_payment') {
+          setViewingJob(fresh.data);
+          openPaymentQR(fresh.data);
+        } else if (viewingJob?._id === confirmedJobId) {
+          setViewingJob(fresh.data || null);
+        }
+      } catch (_) { /* non-blocking */ }
     } catch (err) {
       showMsg(err.response?.data?.error || err.response?.data?.details || 'Failed to confirm completion');
     } finally {
@@ -1618,9 +1688,19 @@ function JobBoard({ user, onViewPortfolio }) {
     setConfirmingApproval(jobId);
     try {
       await axios.post(`${API_URL}/api/jobs/${jobId}/applications/${appId}/confirm`, {}, { headers: { Authorization: `Bearer ${token}` } });
-      showMsg('Job confirmed! Transaction created.');
-      if (viewingJob?._id === jobId) setViewingJob(null);
-      await fetchMyJobs(); await fetchMyApplications(); await fetchJobs();
+      showMsg('Job confirmed! Next: scan the QR code together to start.');
+      await Promise.all([fetchMyJobs(), fetchMyApplications(), fetchJobs()]);
+      // QR handshake is the next step — open it right away on this device
+      // (the other device auto-opens via the schedule_confirmed notification).
+      try {
+        const fresh = await axios.get(`${API_URL}/api/jobs/${jobId}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+        if (fresh.data?.status === 'accepted') {
+          setViewingJob(fresh.data);
+          setQrHandshakeJob(fresh.data);
+        } else if (viewingJob?._id === jobId) {
+          setViewingJob(fresh.data || null);
+        }
+      } catch (_) { /* non-blocking */ }
     } catch (err) {
       console.error('Confirm approval error:', err);
       showMsg(err.response?.data?.error || err.response?.data?.details || 'Failed to confirm');
@@ -1643,7 +1723,7 @@ function JobBoard({ user, onViewPortfolio }) {
     try {
       await axios.post(`${API_URL}/api/jobs/${jobId}/applications/${appId}/decline`, {}, { headers: { Authorization: `Bearer ${token}` } });
       showMsg('Schedule declined.');
-      await fetchMyJobs(); await fetchMyApplications(); await fetchJobs();
+      await Promise.all([fetchMyJobs(), fetchMyApplications(), fetchJobs()]);
     } catch (err) {
       showMsg(err.response?.data?.error || 'Failed to decline');
     } finally {
@@ -2075,7 +2155,7 @@ function JobBoard({ user, onViewPortfolio }) {
                     <span style={{ background: '#dcfce7', color: '#166534', padding: '3px 10px', borderRadius: 20 }}>✅ You rated</span>
                     <span style={{ background: '#dcfce7', color: '#166534', padding: '3px 10px', borderRadius: 20 }}>✅ Helper rated</span>
                   </div>
-                  <button onClick={(e) => { e.stopPropagation(); setPaymentHandshakeJob(job); }} style={{
+                  <button onClick={(e) => { e.stopPropagation(); openPaymentQR(job); }} style={{
                     width: '100%', padding: '14px', borderRadius: 16, border: 'none', fontSize: 14, fontWeight: 800, cursor: 'pointer',
                     background: 'linear-gradient(135deg, #f59e0b, #d97706)', color: 'white', minHeight: 52,
                     boxShadow: '0 4px 16px rgba(245,158,11,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
@@ -2761,7 +2841,7 @@ function JobBoard({ user, onViewPortfolio }) {
                     <span style={{ background: '#dcfce7', color: '#166534', padding: '3px 10px', borderRadius: 20 }}>✅ You rated</span>
                     <span style={{ background: '#dcfce7', color: '#166534', padding: '3px 10px', borderRadius: 20 }}>✅ Client rated</span>
                   </div>
-                  <button onClick={(e) => { e.stopPropagation(); setPaymentHandshakeJob(job); }} style={{
+                  <button onClick={(e) => { e.stopPropagation(); openPaymentQR(job); }} style={{
                     width: '100%', padding: '14px', borderRadius: 16, border: 'none', fontSize: 14, fontWeight: 800, cursor: 'pointer',
                     background: 'linear-gradient(135deg, #f59e0b, #d97706)', color: 'white', minHeight: 52,
                     boxShadow: '0 4px 16px rgba(245,158,11,0.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
@@ -2991,7 +3071,7 @@ function JobBoard({ user, onViewPortfolio }) {
       }
       if (viewingJob.status === 'pending_payment' || viewingJob.status === 'completed' || stepNum >= 6) {
         setWorkHubTab('complete');
-        if (viewingJob.status === 'pending_payment') setPaymentHandshakeJob(viewingJob);
+        if (viewingJob.status === 'pending_payment') openPaymentQR(viewingJob);
       } else if (stepNum === 5) {
         setWorkHubTab('issues');
       } else {
@@ -4210,7 +4290,7 @@ function JobBoard({ user, onViewPortfolio }) {
                     {viewingJob.status === 'pending_payment' && (
                       <>
                         <div style={{ fontSize: 13, fontWeight: 800, color: '#92400e', marginTop: 6 }}>💳 Waiting for payment confirmation</div>
-                        <button onClick={() => setPaymentHandshakeJob(viewingJob)} style={{ marginTop: 8, width: '100%', padding: '10px 12px', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #8b5cf6, #7c3aed)', color: 'white', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>📱 Open Payment QR</button>
+                        <button onClick={() => openPaymentQR(viewingJob)} style={{ marginTop: 8, width: '100%', padding: '10px 12px', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #8b5cf6, #7c3aed)', color: 'white', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>📱 Open Payment QR</button>
                       </>
                     )}
                     {viewingJob.status === 'completed' && (
@@ -4354,7 +4434,7 @@ function JobBoard({ user, onViewPortfolio }) {
                       ✅ Job fully completed.
                     </div>
                   )}
-                  {viewingJob.status === 'completed' && (() => {
+                  {['pending_review', 'pending_payment', 'completed'].includes(viewingJob.status) && (() => {
                     const iAmPoster = isPosterForJob(viewingJob);
                     const iHaveRated = iAmPoster ? viewingJob.posterReviewed : viewingJob.providerReviewed;
                     if (iHaveRated) {
@@ -4366,7 +4446,10 @@ function JobBoard({ user, onViewPortfolio }) {
                     }
                     return (
                       <div style={{ marginBottom: 8, padding: 12, borderRadius: 12, background: '#fffbeb', border: '2px solid #f59e0b' }}>
-                        <div style={{ fontSize: 13, fontWeight: 800, color: '#92400e', marginBottom: 8 }}>⭐ Rate the {iAmPoster ? 'helper' : 'job provider'}</div>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: '#92400e', marginBottom: 4 }}>⭐ Rate the {iAmPoster ? 'helper' : 'job provider'}</div>
+                        {viewingJob.status !== 'completed' && (
+                          <div style={{ fontSize: 11, color: '#a16207', marginBottom: 8 }}>Ratings happen before payment. Your stars stay hidden from the other person until payment is confirmed.</div>
+                        )}
                         <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 8 }}>
                           {[1, 2, 3, 4, 5].map(star => (
                             <button key={star} onClick={() => setMyJobRating(star)} style={{ border: 'none', background: 'transparent', fontSize: 30, cursor: 'pointer', padding: 2, filter: star <= myJobRating ? 'none' : 'grayscale(1) opacity(0.35)' }}>⭐</button>
@@ -4382,7 +4465,7 @@ function JobBoard({ user, onViewPortfolio }) {
                   <div style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>When job is done, submit completion and proceed to payment QR confirmation.</div>
                   <button onClick={() => handleCompleteJob(viewingJob)} disabled={!!viewingJob.completionRequest?.status || ['pending_review', 'pending_payment', 'completed'].includes(viewingJob.status)} style={{ width: '100%', padding: '10px 12px', borderRadius: 12, border: 'none', background: '#4f46e5', color: 'white', fontSize: 12, fontWeight: 800, cursor: (viewingJob.completionRequest?.status || ['pending_review', 'pending_payment', 'completed'].includes(viewingJob.status)) ? 'not-allowed' : 'pointer', opacity: (viewingJob.completionRequest?.status || ['pending_review', 'pending_payment', 'completed'].includes(viewingJob.status)) ? 0.6 : 1 }}>Mark done & continue</button>
                   {viewingJob.status === 'pending_payment' && (
-                    <button onClick={() => setPaymentHandshakeJob(viewingJob)} style={{ marginTop: 8, width: '100%', padding: '10px 12px', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #8b5cf6, #7c3aed)', color: 'white', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>📱 Open Payment QR</button>
+                    <button onClick={() => openPaymentQR(viewingJob)} style={{ marginTop: 8, width: '100%', padding: '10px 12px', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #8b5cf6, #7c3aed)', color: 'white', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>📱 Open Payment QR</button>
                   )}
                   {viewingJob.status === 'pending_review' && viewingJob.completionRequest?.status === 'pending' && viewingJob.completionRequest.initiatedBy?.toString?.() !== userId && (
                     <button onClick={() => openConfirmCompletion(viewingJob)} style={{ marginTop: 8, width: '100%', padding: '10px 12px', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #22c55e, #16a34a)', color: 'white', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>✅ Confirm Completion</button>

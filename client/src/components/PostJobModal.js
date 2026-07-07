@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import { categoryEmojis, categoryGradients, categoryPriceHints, jobCategories, modalOverlayStyle } from '../shared/constants';
 import { compressImages } from '../utils/imageCompression';
+import useBodyScrollLock from '../shared/useBodyScrollLock';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -134,6 +135,7 @@ function Toggle({ on, onFlip, activeColor = '#6366f1' }) {
 }
 
 function PostJobModal({ user, onClose, onPosted }) {
+  useBodyScrollLock();
   const [step, setStep] = useState(1);
   const [title, setTitle] = useState('');
   const [category, setCategory] = useState('');

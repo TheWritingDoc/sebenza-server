@@ -4,10 +4,12 @@ import { getImageUrl, PLACEHOLDER_IMG, modalOverlayStyle, modalContentStyle, MAX
 import { scrollToRef, blurActiveInput, mobileFieldFocusScroll } from '../shared/workflowFocus';
 import { UserCircle, IdCard } from './Icons';
 import { TrustStars, communityStarsFromStats, BehaviourBadges } from './TrustCenter';
+import useBodyScrollLock from '../shared/useBodyScrollLock';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
 function JobApplicantsModal({ job, user, onClose, onUpdated, onViewPortfolio }) {
+  useBodyScrollLock();
   const [selectedApp, setSelectedApp] = useState(null);
   const [mode, setMode] = useState(null); // 'approve' | 'counter'
   const [approveAmount, setApproveAmount] = useState('');
@@ -338,6 +340,16 @@ function JobApplicantsModal({ job, user, onClose, onUpdated, onViewPortfolio }) 
               {app.status === 'negotiating' && app.negotiationHistory?.length >= 2 && (
                 <span style={{ fontSize: 11, background: '#fee2e2', color: '#991b1b', padding: '2px 8px', borderRadius: 10, fontWeight: 600 }}>⚠️ Final round</span>
               )}
+              <button
+                type="button"
+                onClick={() => {
+                  if (!applicantId) { showMsg('Profile unavailable for this applicant. Please refresh applicants.'); return; }
+                  onViewPortfolio && onViewPortfolio({ id: applicantId, name: applicantName });
+                }}
+                style={{ fontSize: 11, fontWeight: 700, background: '#eef2ff', color: '#4f46e5', padding: '4px 10px', borderRadius: 999, border: '1px solid #c7d2fe', cursor: 'pointer' }}
+              >
+                👤 View Profile
+              </button>
             </div>
           </div>
         </div>

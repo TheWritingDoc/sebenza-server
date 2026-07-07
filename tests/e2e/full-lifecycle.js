@@ -220,6 +220,12 @@ async function runLifecycle(paymentMethod) {
   r = await api('GET', `/api/jobs/${jobId}`, { token: poster.token });
   expect(r.data?.status === 'pending_payment', 'job status = pending_payment', `status=${r.data?.status}`);
 
+  // Double-blind: before payment, the helper knows THAT the poster rated
+  // (posterReviewed flag) but cannot see the stars/comment.
+  expect(r.data?.posterReviewed === true && !!r.data?.posterReview, 'poster sees own review before payment', JSON.stringify({ reviewed: r.data?.posterReviewed, hasReview: !!r.data?.posterReview }));
+  r = await api('GET', `/api/jobs/${jobId}`, { token: helper.token });
+  expect(r.data?.posterReviewed === true && r.data?.posterReview === undefined, 'helper CANNOT see poster review before payment (double-blind)', JSON.stringify({ reviewed: r.data?.posterReviewed, review: r.data?.posterReview }));
+
   phase('11. Payment handshake via QR (single scan finalizes)');
   r = await api('POST', `/api/jobs/${jobId}/payment-handshake`, {
     token: helper.token, body: { lat: JOB_LAT, lng: JOB_LNG }
@@ -232,6 +238,10 @@ async function runLifecycle(paymentMethod) {
 
   r = await api('GET', `/api/jobs/${jobId}`, { token: poster.token });
   expect(r.data?.status === 'completed', 'job status = completed', `status=${r.data?.status}`);
+
+  // Double-blind lifted: after payment both parties see each other's ratings.
+  r = await api('GET', `/api/jobs/${jobId}`, { token: helper.token });
+  expect(!!r.data?.posterReview?.overallRating, 'helper sees poster review AFTER payment confirmed', JSON.stringify(r.data?.posterReview));
 
   if (paymentMethod === 'escrow') {
     const h = await prisma.user.findUnique({ where: { id: helper.id }, select: { randBalance: true } });

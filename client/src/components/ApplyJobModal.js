@@ -1,12 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import { categoryEmojis, getImageUrl, PLACEHOLDER_IMG, modalOverlayStyle, modalContentStyle } from '../shared/constants';
+import useBodyScrollLock from '../shared/useBodyScrollLock';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
 function ApplyJobModal({ job, onClose, onApplied }) {
+  useBodyScrollLock();
+  const navigate = useNavigate();
   const [proposedAmount, setProposedAmount] = useState(job.budget?.toString() || '');
-  const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
@@ -26,7 +29,6 @@ function ApplyJobModal({ job, onClose, onApplied }) {
     const errs = {};
     const amount = parseFloat(proposedAmount);
     if (isNaN(amount) || amount <= 0) errs.proposedAmount = true;
-    if (!message.trim()) errs.message = true;
 
     if (Object.keys(errs).length) {
       setFieldErrors(errs);
@@ -50,7 +52,7 @@ function ApplyJobModal({ job, onClose, onApplied }) {
     setError('');
     try {
       await axios.post(`${API_URL}/api/jobs/${job._id}/apply`,
-        { proposedAmount: amount, timeAdjustment: timeAdjustment ? new Date(timeAdjustment).toISOString() : undefined, message },
+        { proposedAmount: amount, timeAdjustment: timeAdjustment ? new Date(timeAdjustment).toISOString() : undefined },
         { headers: { Authorization: `Bearer ${token}` }, withCredentials: true }
       );
       onApplied();
@@ -161,10 +163,19 @@ function ApplyJobModal({ job, onClose, onApplied }) {
               background: job.posterId?.avatar ? `url(${getImageUrl(job.posterId.avatar)}) center/cover` : 'linear-gradient(135deg, #6366f1, #4f46e5)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: 'white', fontWeight: 600, flexShrink: 0
             }}>{!job.posterId?.avatar && job.posterId?.name?.charAt(0).toUpperCase()}</div>
-            <div style={{ minWidth: 0 }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontSize: 13, fontWeight: 700, color: '#1e293b' }}>{job.posterId?.name || 'Unknown'}</div>
               <div style={{ fontSize: 11, color: '#94a3b8' }}>{job.posterId?.rating > 0 ? `⭐ ${job.posterId.rating.toFixed(1)}` : 'New neighbour'}</div>
             </div>
+            {(job.posterId?._id || job.posterId?.id) && (
+              <button
+                type="button"
+                onClick={() => navigate(`/user/${job.posterId._id || job.posterId.id}`)}
+                style={{ padding: '7px 12px', borderRadius: 10, border: '1px solid #c7d2fe', background: '#eef2ff', color: '#4f46e5', fontSize: 12, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}
+              >
+                👤 View Profile
+              </button>
+            )}
           </div>
           <div style={{ padding: '10px 14px', borderRadius: 12, background: job.paymentMethod === 'escrow' ? '#eef2ff' : '#f0fdf4', border: `1px solid ${job.paymentMethod === 'escrow' ? '#c7d2fe' : '#bbf7d0'}`, flexShrink: 0 }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: job.paymentMethod === 'escrow' ? '#4338ca' : '#166534' }}>
@@ -245,20 +256,9 @@ function ApplyJobModal({ job, onClose, onApplied }) {
           </div>
         )}
 
-        {/* Cover Message */}
-        <div style={{ marginBottom: 20 }}>
-          <label style={{ ...labelBase, color: fieldErrors.message ? '#dc2626' : '#1e293b' }}>
-            Cover Message * {fieldErrors.message && <span style={{ color: '#dc2626', fontSize: 12 }}>— required</span>}
-          </label>
-          <textarea
-            value={message}
-            onChange={e => { setMessage(e.target.value); setError(''); setFieldErrors(prev => ({ ...prev, message: false })); }}
-            placeholder="Introduce yourself and explain why you'd love to help..."
-            rows={4}
-            style={{ ...inputBase, resize: 'vertical', minHeight: 80, borderColor: fieldErrors.message ? '#ef4444' : '#e2e8f0', background: fieldErrors.message ? '#fef2f2' : '#fafbfc' }}
-            onFocus={e => { e.target.style.borderColor = fieldErrors.message ? '#ef4444' : '#6366f1'; e.target.style.boxShadow = fieldErrors.message ? '0 0 0 3px rgba(239,68,68,0.12)' : '0 0 0 3px rgba(99,102,241,0.12)'; e.target.style.background = 'white'; }}
-            onBlur={e => { e.target.style.borderColor = fieldErrors.message ? '#ef4444' : '#e2e8f0'; e.target.style.boxShadow = 'none'; e.target.style.background = fieldErrors.message ? '#fef2f2' : '#fafbfc'; }}
-          />
+        {/* No cover letter — the poster judges you by your profile instead */}
+        <div style={{ marginBottom: 20, padding: '10px 14px', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 12, fontSize: 12, color: '#166534', fontWeight: 600 }}>
+          💡 No cover letter needed — the job provider will see your profile, rating and work history with your offer.
         </div>
 
         {/* Sticky Bottom Actions */}

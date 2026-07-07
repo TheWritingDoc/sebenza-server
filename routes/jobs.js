@@ -98,6 +98,20 @@ function toPublicJob(job, requesterId) {
         : undefined
     }));
   }
+  return hideBlindReviews(j, requesterId);
+}
+
+// ─── Double-blind reviews ───
+// Until the job is fully completed (payment received + final QR scan), each
+// party can only see the review THEY wrote — never the one written about them.
+function hideBlindReviews(j, requesterId) {
+  if (!j || j.status === 'completed') return j;
+  const posterId = String(j.posterId?.id || j.posterId?._id || j.posterId || '');
+  if (requesterId && String(requesterId) === posterId) {
+    delete j.providerReview;
+  } else {
+    delete j.posterReview;
+  }
   return j;
 }
 
@@ -274,7 +288,7 @@ router.get('/my-jobs', auth, async (req, res) => {
     res.json(toDTO(jobs.map(j => {
       const obj = jobOut(j);
       obj.myApplication = findMyApplication(obj.applications, req.userId);
-      return obj;
+      return hideBlindReviews(obj, req.userId);
     })));
   } catch (err) {
     console.error('My jobs error:', err);
@@ -296,7 +310,7 @@ router.get('/my-applications', auth, async (req, res) => {
     res.json(toDTO(jobs.map(j => {
       const obj = jobOut(j);
       obj.myApplication = findMyApplication(obj.applications, req.userId);
-      return obj;
+      return hideBlindReviews(obj, req.userId);
     })));
   } catch (err) {
     console.error('My applications error:', err);
@@ -373,7 +387,7 @@ router.get('/:id', async (req, res) => {
 
     if (isPoster || isAcceptedApplicant) {
       obj.myApplication = myApplication;
-      return res.json(toDTO(obj));
+      return res.json(toDTO(hideBlindReviews(obj, reqUserId)));
     }
 
     const pub = toPublicJob(job, reqUserId);
@@ -1392,11 +1406,21 @@ router.post('/:id/review', auth, async (req, res) => {
 
     res.json({ message: 'Review submitted' });
 
-    if (ratedUserId) {
+    // Double-blind: before the job is fully completed the other party only
+    // learns THAT you rated, not WHAT. The star value is revealed by the
+    // payment-handshake finalizer once payment is confirmed.
+    if (ratedUserId && job.status === 'completed') {
       notify(req, ratedUserId, {
         type: 'rating_received',
         title: `You Got ${'⭐'.repeat(ratingNum)}`,
         message: `${ratingNum}/5 stars for "${job.title}"${review.comment ? ` — "${review.comment.slice(0, 80)}"` : ''}`,
+        jobId: job.id
+      });
+    } else if (ratedUserId) {
+      notify(req, ratedUserId, {
+        type: 'review_submitted',
+        title: 'You Were Rated ⭐',
+        message: `Your rating for "${job.title}" will be revealed once payment is confirmed.`,
         jobId: job.id
       });
     }
@@ -1526,6 +1550,20 @@ router.post('/:id/payment-handshake', auth, async (req, res) => {
         jobId: finalized.id
       });
     }
+
+    // Reveal double-blind ratings now that payment is confirmed.
+    const revealRating = (userId, review) => {
+      if (!userId || !review || !review.overallRating) return;
+      const stars = parseInt(review.overallRating) || 0;
+      notify(req, userId, {
+        type: 'rating_received',
+        title: `You Got ${'⭐'.repeat(Math.max(1, Math.min(5, stars)))}`,
+        message: `${stars}/5 stars for "${finalized.title}"${review.comment ? ` — "${String(review.comment).slice(0, 80)}"` : ''}`,
+        jobId: finalized.id
+      });
+    };
+    revealRating(acceptedApplicantId, finalized.posterReview);
+    revealRating(String(finalized.posterId), finalized.providerReview);
 
     res.json({
       message: 'Payment confirmed. Job completed.',

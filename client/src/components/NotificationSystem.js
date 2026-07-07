@@ -275,6 +275,15 @@ export default function NotificationSystem({ user, socket, panelOpen: controlled
         }));
       }
 
+      // When the next step is a QR scan, both devices should open the QR
+      // screen automatically — JobBoard listens for this.
+      const QR_NEXT = { schedule_confirmed: 'start', job_pending_payment: 'payment' };
+      if (notif.jobId && QR_NEXT[notif.type]) {
+        window.dispatchEvent(new CustomEvent('sebenza:auto-qr', {
+          detail: { jobId: notif.jobId, mode: QR_NEXT[notif.type] }
+        }));
+      }
+
       playNotificationSound();
 
       // Show system notification if page is hidden/background

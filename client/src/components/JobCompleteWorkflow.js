@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import axios from 'axios';
 import PhotoUploadFlow from './PhotoUploadFlow';
+import useBodyScrollLock from '../shared/useBodyScrollLock';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -16,6 +17,7 @@ function getCurrentLocation() {
 }
 
 function JobCompleteWorkflow({ job, onClose, onCompleted }) {
+  useBodyScrollLock();
   const [photos, setPhotos] = useState([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
