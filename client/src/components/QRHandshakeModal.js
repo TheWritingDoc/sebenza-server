@@ -372,7 +372,7 @@ function QRHandshakeModal({ jobId, userId, isPoster, onClose, onScanned, handsha
 
     return () => {
       if (scannerRef.current) {
-        scannerRef.current.stop().catch(() => {});
+        try { scannerRef.current.stop().catch(() => {}); } catch (e) { /* scanner never started (camera denied) — stop() throws synchronously */ }
         scannerRef.current = null;
       }
       setScanning(false);
@@ -386,7 +386,7 @@ function QRHandshakeModal({ jobId, userId, isPoster, onClose, onScanned, handsha
       setSubmitting(true);
       setScanError('');
       if (scannerRef.current) {
-        scannerRef.current.stop().catch(() => {});
+        try { scannerRef.current.stop().catch(() => {}); } catch (e) { /* scanner never started (camera denied) — stop() throws synchronously */ }
         scannerRef.current = null;
       }
       setScanning(false);
@@ -504,7 +504,7 @@ function QRHandshakeModal({ jobId, userId, isPoster, onClose, onScanned, handsha
     setScanError('');
 
     if (scannerRef.current) {
-      scannerRef.current.stop().catch(() => {});
+      try { scannerRef.current.stop().catch(() => {}); } catch (e) { /* scanner never started (camera denied) — stop() throws synchronously */ }
       scannerRef.current = null;
     }
     setScanning(false);
@@ -685,8 +685,13 @@ function QRHandshakeModal({ jobId, userId, isPoster, onClose, onScanned, handsha
   return (
     <>
       <style>{animationStyles}</style>
-      <div style={modalOverlayStyle} onClick={() => { if (result) onClose(); }}>
-        <div style={{ ...modalContentStyle(400), maxHeight: '90vh', overflowY: 'auto', padding: 0 }} onClick={e => e.stopPropagation()}>
+      <div style={{ ...modalOverlayStyle, padding: window.innerWidth < 640 ? 0 : modalOverlayStyle.padding }} onClick={() => { if (result) onClose(); }}>
+        <div style={{
+          ...modalContentStyle(400),
+          maxHeight: window.innerWidth < 640 ? '100dvh' : '90vh',
+          ...(window.innerWidth < 640 ? { width: '100vw', maxWidth: '100vw', height: '100dvh', borderRadius: 0 } : {}),
+          overflowY: 'auto', padding: 0
+        }} onClick={e => e.stopPropagation()}>
           {/* Enhanced Header */}
           <div style={{
             background: headerGradient,
@@ -745,11 +750,9 @@ function QRHandshakeModal({ jobId, userId, isPoster, onClose, onScanned, handsha
               </div>
             )}
 
-            {/* Partner card (not on result screen) */}
-            {!result && <PartnerCard isPoster={isPoster} isPaymentMode={isPaymentMode} />}
-
-            {/* Step indicator (not on result screen) */}
-            {!result && <StepIndicator step={currentStep} theme={theme} />}
+            {/* Partner card + step indicator removed from above the QR: they
+                pushed the code/scanner below the fold on phones, forcing users
+                to scroll to line up a scan. QR must be visible immediately. */}
 
             {/* Result overlay */}
             {result ? renderResult() : (

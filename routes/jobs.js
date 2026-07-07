@@ -697,31 +697,100 @@ router.post('/:id/applications/:appId/negotiate', auth, async (req, res) => {
 });
 
 // ─── POST /api/jobs/:id/applications/:appId/accept-offer ───
+// Two flows share this endpoint:
+//  1. Helper locks in an already-approved offer (approved → accepted).
+//  2. EITHER party accepts the other's pending counter while the job is still
+//     open — this approves the application at the countered amount/time. The
+//     helper must still /confirm afterwards (that is where escrow is funded),
+//     so accepting a counter never skips the T&C/funding step.
 router.post('/:id/applications/:appId/accept-offer', auth, async (req, res) => {
   try {
     if (!isId(req.params.id) || !isId(req.params.appId)) return res.status(400).json({ error: 'Cannot accept offer' });
-    const accepted = await prisma.$transaction(async (tx) => {
+
+    const job = await prisma.job.findUnique({
+      where: { id: req.params.id },
+      select: { id: true, title: true, posterId: true, status: true }
+    });
+    if (!job) return res.status(404).json({ error: 'Job not found' });
+    const app = await prisma.application.findFirst({ where: { id: req.params.appId, jobId: job.id } });
+    if (!app) return res.status(404).json({ error: 'Application not found' });
+
+    const isPoster = String(job.posterId) === req.userId;
+    const isApplicant = String(app.applicantId) === req.userId;
+    if (!isPoster && !isApplicant) return res.status(403).json({ error: 'Not authorized' });
+
+    // Flow 1: helper locks in the approved offer.
+    if (isApplicant && job.status === 'approved') {
+      const accepted = await prisma.$transaction(async (tx) => {
+        const guard = await tx.job.updateMany({
+          where: {
+            id: req.params.id,
+            status: 'approved',
+            applications: { some: { id: req.params.appId, applicantId: req.userId } }
+          },
+          data: { status: 'accepted' }
+        });
+        if (guard.count === 0) return null;
+        await tx.application.update({ where: { id: req.params.appId }, data: { status: 'accepted' } });
+        return true;
+      });
+      if (!accepted) return res.status(400).json({ error: 'Cannot accept offer' });
+      res.json({ message: 'Offer accepted' });
+
+      notify(req, job.posterId, {
+        type: 'offer_accepted',
+        title: 'Offer Accepted ✅',
+        message: `Your helper accepted the offer for "${job.title}"`,
+        jobId: job.id
+      });
+      return;
+    }
+
+    // Flow 2: accept the other party's pending counter (breaks the old
+    // negotiation deadlock where neither side had a working Accept button).
+    const history = Array.isArray(app.negotiationHistory) ? app.negotiationHistory : [];
+    const lastOffer = history.length ? history[history.length - 1] : null;
+    const lastBy = lastOffer ? String(lastOffer.proposedBy) : null;
+    const isOthersPendingOffer = lastOffer && lastOffer.status === 'pending' && lastBy !== req.userId;
+    if (job.status !== 'open' || !isOthersPendingOffer) {
+      return res.status(400).json({ error: 'Cannot accept offer' });
+    }
+
+    const agreedAmount = parseFloat(lastOffer.amount) || Number(app.proposedAmount);
+    const agreedTime = lastOffer.proposedTime ? new Date(lastOffer.proposedTime) : null;
+    history[history.length - 1] = { ...lastOffer, status: 'accepted', acceptedAt: new Date() };
+
+    const approved = await prisma.$transaction(async (tx) => {
       const guard = await tx.job.updateMany({
-        where: {
-          id: req.params.id,
-          status: 'approved',
-          applications: { some: { id: req.params.appId, applicantId: req.userId } }
-        },
-        data: { status: 'accepted' }
+        where: { id: job.id, status: 'open' },
+        data: { status: 'approved', acceptedApplicationId: app.id }
       });
       if (guard.count === 0) return null;
-      await tx.application.update({ where: { id: req.params.appId }, data: { status: 'accepted' } });
-      return tx.job.findUnique({ where: { id: req.params.id }, select: { id: true, title: true, posterId: true } });
+      await tx.application.update({
+        where: { id: app.id },
+        data: { status: 'approved', approvedAmount: agreedAmount, approvedTime: agreedTime, negotiationHistory: history }
+      });
+      return true;
     });
-    if (!accepted) return res.status(400).json({ error: 'Cannot accept offer' });
-    res.json({ message: 'Offer accepted' });
+    if (!approved) return res.status(400).json({ error: 'Cannot accept offer' });
 
-    notify(req, accepted.posterId, {
-      type: 'offer_accepted',
-      title: 'Offer Accepted ✅',
-      message: `Your helper accepted the offer for "${accepted.title}"`,
-      jobId: accepted.id
-    });
+    res.json({ message: 'Offer accepted', agreedAmount, nextStep: 'confirm' });
+
+    if (isPoster) {
+      notify(req, app.applicantId, {
+        type: 'application_approved',
+        title: 'Your Offer Was Accepted! 🎉',
+        message: `R${agreedAmount} agreed for "${job.title}" — confirm now to lock it in`,
+        jobId: job.id
+      });
+    } else {
+      notify(req, job.posterId, {
+        type: 'offer_accepted',
+        title: 'Offer Accepted ✅',
+        message: `Your helper accepted R${agreedAmount} for "${job.title}" — waiting for their final confirmation`,
+        jobId: job.id
+      });
+    }
   } catch (err) {
     console.error('Accept offer error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -729,25 +798,38 @@ router.post('/:id/applications/:appId/accept-offer', auth, async (req, res) => {
 });
 
 // ─── POST /api/jobs/:id/applications/:appId/reject-offer ───
+// Either party can decline the other's pending counter. Rejecting closes the
+// application (both clients treat it as final and prompt a fresh apply).
 router.post('/:id/applications/:appId/reject-offer', auth, async (req, res) => {
   try {
     if (!isId(req.params.id) || !isId(req.params.appId)) return res.status(404).json({ error: 'Not found' });
-    const updated = await prisma.application.updateMany({
-      where: { id: req.params.appId, jobId: req.params.id, applicantId: req.userId },
-      data: { status: 'rejected' }
-    });
-    if (updated.count === 0) return res.status(404).json({ error: 'Not found' });
-    res.json({ message: 'Offer rejected' });
 
     const job = await prisma.job.findUnique({ where: { id: req.params.id }, select: { id: true, title: true, posterId: true } });
-    if (job) {
-      notify(req, job.posterId, {
-        type: 'offer_rejected',
-        title: 'Offer Declined',
-        message: `Your offer for "${job.title}" was declined — you can send a new one`,
-        jobId: job.id
-      });
+    if (!job) return res.status(404).json({ error: 'Not found' });
+    const app = await prisma.application.findFirst({ where: { id: req.params.appId, jobId: job.id } });
+    if (!app) return res.status(404).json({ error: 'Not found' });
+
+    const isPoster = String(job.posterId) === req.userId;
+    const isApplicant = String(app.applicantId) === req.userId;
+    if (!isPoster && !isApplicant) return res.status(403).json({ error: 'Not authorized' });
+
+    const history = Array.isArray(app.negotiationHistory) ? app.negotiationHistory : [];
+    if (history.length && history[history.length - 1].status === 'pending') {
+      history[history.length - 1] = { ...history[history.length - 1], status: 'rejected', rejectedAt: new Date() };
     }
+    await prisma.application.update({
+      where: { id: app.id },
+      data: { status: 'rejected', negotiationHistory: history }
+    });
+    res.json({ message: 'Offer rejected' });
+
+    const counterparty = isPoster ? app.applicantId : job.posterId;
+    notify(req, counterparty, {
+      type: 'offer_rejected',
+      title: 'Offer Declined',
+      message: `Your offer for "${job.title}" was declined — you can send a new one`,
+      jobId: job.id
+    });
   } catch (err) {
     console.error('Reject offer error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -1290,20 +1372,34 @@ router.post('/:id/review', auth, async (req, res) => {
       createdAt: new Date()
     };
 
+    let ratedUserId = null;
     if (isPoster && reviewTarget === 'provider') {
       if (job.posterReviewed) return res.status(400).json({ error: 'You already reviewed this job' });
       await prisma.job.update({ where: { id: job.id }, data: { posterReviewed: true, posterReview: review } });
       const { acceptedApp } = getJobParties(job, req.userId);
-      if (acceptedApp) await applyRatingToUser(String(acceptedApp.applicantId), ratingNum);
+      if (acceptedApp) {
+        ratedUserId = String(acceptedApp.applicantId);
+        await applyRatingToUser(ratedUserId, ratingNum);
+      }
     } else if (isProvider && reviewTarget === 'poster') {
       if (job.providerReviewed) return res.status(400).json({ error: 'You already reviewed this job' });
       await prisma.job.update({ where: { id: job.id }, data: { providerReviewed: true, providerReview: review } });
-      await applyRatingToUser(String(job.posterId), ratingNum);
+      ratedUserId = String(job.posterId);
+      await applyRatingToUser(ratedUserId, ratingNum);
     } else {
       return res.status(403).json({ error: 'Not authorized for this review' });
     }
 
     res.json({ message: 'Review submitted' });
+
+    if (ratedUserId) {
+      notify(req, ratedUserId, {
+        type: 'rating_received',
+        title: `You Got ${'⭐'.repeat(ratingNum)}`,
+        message: `${ratingNum}/5 stars for "${job.title}"${review.comment ? ` — "${review.comment.slice(0, 80)}"` : ''}`,
+        jobId: job.id
+      });
+    }
   } catch (err) {
     console.error('Review error:', err);
     res.status(500).json({ error: 'Server error' });

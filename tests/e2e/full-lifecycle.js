@@ -317,6 +317,70 @@ async function proximityGuardCheck() {
   expect(r.status === 200 && r.data?.paymentConfirmed === true, 'manual payment confirm works (helper)', JSON.stringify(r.data));
 }
 
+async function negotiationAcceptanceCheck() {
+  phase('════════ NEGOTIATION ACCEPTANCE (deadlock regression) ════════');
+  const poster = await register('nego-poster');
+  const helper = await register('nego-helper');
+  createdUserIds.push(poster.id, helper.id);
+
+  async function makeNegotiatedJob(counterBy) {
+    let r = await api('POST', '/api/jobs', {
+      token: poster.token,
+      body: { title: `E2E nego ${counterBy} job`, description: 'x', category: 'Testing', budget: 200, lat: JOB_LAT, lng: JOB_LNG, paymentMethod: 'cash' }
+    });
+    const jobId = r.data.job.id;
+    createdJobIds.push(jobId);
+    await api('POST', `/api/jobs/${jobId}/apply`, { token: helper.token, body: { proposedAmount: 250 } });
+    r = await api('GET', '/api/jobs/my-jobs', { token: poster.token });
+    const appId = (r.data || []).find(j => (j.id || j._id) === jobId)?.applications?.[0]?.id;
+    return { jobId, appId };
+  }
+
+  // Case A: poster counters, HELPER accepts the counter
+  let { jobId, appId } = await makeNegotiatedJob('poster');
+  let r = await api('POST', `/api/jobs/${jobId}/applications/${appId}/negotiate`, {
+    token: poster.token, body: { amount: 220, message: '220 final?' }
+  });
+  expect(r.status === 200, 'poster sends counter', JSON.stringify(r.data));
+  r = await api('POST', `/api/jobs/${jobId}/applications/${appId}/accept-offer`, { token: helper.token, body: {} });
+  expect(r.status === 200 && r.data?.nextStep === 'confirm' && r.data?.agreedAmount === 220,
+    'helper accepts poster counter (was 400 deadlock)', JSON.stringify(r.data));
+  r = await api('POST', `/api/jobs/${jobId}/applications/${appId}/confirm`, { token: helper.token, body: {} });
+  expect(r.status === 200, 'helper confirms after accepting counter', JSON.stringify(r.data));
+  r = await api('GET', `/api/jobs/${jobId}`, { token: poster.token });
+  expect(r.data?.status === 'accepted', 'job accepted at negotiated amount', `status=${r.data?.status}`);
+
+  // Case B: helper counters, POSTER accepts the counter
+  ({ jobId, appId } = await makeNegotiatedJob('helper'));
+  r = await api('POST', `/api/jobs/${jobId}/applications/${appId}/negotiate`, {
+    token: helper.token, body: { amount: 240, message: 'Can do it for 240' }
+  });
+  expect(r.status === 200, 'helper sends counter', JSON.stringify(r.data));
+  r = await api('POST', `/api/jobs/${jobId}/applications/${appId}/accept-offer`, { token: poster.token, body: {} });
+  expect(r.status === 200 && r.data?.nextStep === 'confirm' && r.data?.agreedAmount === 240,
+    'poster accepts helper counter (was 403/400 deadlock)', JSON.stringify(r.data));
+  r = await api('POST', `/api/jobs/${jobId}/applications/${appId}/confirm`, { token: helper.token, body: {} });
+  expect(r.status === 200, 'helper confirms after poster accepted', JSON.stringify(r.data));
+  r = await api('GET', `/api/jobs/${jobId}`, { token: poster.token });
+  expect(r.data?.status === 'accepted', 'job accepted at helper-countered amount', `status=${r.data?.status}`);
+
+  // Case C: poster can reject-offer during negotiation (was 404)
+  ({ jobId, appId } = await makeNegotiatedJob('reject'));
+  await api('POST', `/api/jobs/${jobId}/applications/${appId}/negotiate`, {
+    token: helper.token, body: { amount: 999 }
+  });
+  r = await api('POST', `/api/jobs/${jobId}/applications/${appId}/reject-offer`, { token: poster.token, body: {} });
+  expect(r.status === 200, 'poster rejects helper counter (was 404)', `status=${r.status} ${JSON.stringify(r.data)}`);
+
+  // Guard: accepting your OWN pending counter must fail
+  ({ jobId, appId } = await makeNegotiatedJob('own'));
+  await api('POST', `/api/jobs/${jobId}/applications/${appId}/negotiate`, {
+    token: poster.token, body: { amount: 210 }
+  });
+  r = await api('POST', `/api/jobs/${jobId}/applications/${appId}/accept-offer`, { token: poster.token, body: {} });
+  expect(r.status === 400, 'cannot accept your own counter', `status=${r.status}`);
+}
+
 async function cleanup() {
   phase('Cleanup: removing E2E test data');
   try {
@@ -346,6 +410,7 @@ async function cleanup() {
     await runLifecycle('cash');
     await runLifecycle('escrow');
     await proximityGuardCheck();
+    await negotiationAcceptanceCheck();
   } catch (e) {
     bad('lifecycle aborted', e.message);
   } finally {

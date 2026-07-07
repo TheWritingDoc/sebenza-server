@@ -76,6 +76,9 @@ function JobBoard({ user, onViewPortfolio }) {
   ]), []);
   const [completingJob, setCompletingJob] = useState(null);
   const [, setCompletionPhotos] = useState([]);
+  const [myJobRating, setMyJobRating] = useState(5);
+  const [myJobRatingComment, setMyJobRatingComment] = useState('');
+  const [submittingJobRating, setSubmittingJobRating] = useState(false);
   const [confirmCategories, setConfirmCategories] = useState({ punctuality: 5, quality: 5, communication: 5, respect: 5 });
   const [confirmComment, setConfirmComment] = useState('');
   const [reportingIssueJob, setReportingIssueJob] = useState(null);
@@ -1195,12 +1198,19 @@ function JobBoard({ user, onViewPortfolio }) {
   const handleApplicantAcceptOffer = async (jobId, appId) => {
     setAcceptingOfferJobId(jobId);
     try {
-      await axios.post(`${API_URL}/api/jobs/${jobId}/applications/${appId}/accept-offer`, {}, { headers: { Authorization: `Bearer ${token}` } });
-      showMsg('✅ You accepted the offer. The other user has been notified and must now confirm to lock this job assignment.');
-      setWorkflowAlert({
+      const res = await axios.post(`${API_URL}/api/jobs/${jobId}/applications/${appId}/accept-offer`, {}, { headers: { Authorization: `Bearer ${token}` } });
+      const needsConfirm = res.data?.nextStep === 'confirm';
+      showMsg(needsConfirm
+        ? `✅ Deal agreed${res.data?.agreedAmount ? ` at R${res.data.agreedAmount}` : ''}! One more step: confirm to lock it in.`
+        : '✅ You accepted the offer. The other user has been notified and must now confirm to lock this job assignment.');
+      setWorkflowAlert(needsConfirm ? {
+        type: 'accepted',
+        title: 'Price Agreed',
+        body: 'Great. Next step: tap Confirm on the job to accept the T&Cs and lock it in.'
+      } : {
         type: 'accepted',
         title: 'Offer Accepted',
-        body: 'Great. Next step: both users must complete QR handshake to start the job.'
+        body: 'Great. Next step: QR handshake to start the job (only one of you needs to scan).'
       });
       setActiveTab('browse');
       await fetchMyJobs(); await fetchMyApplications(); await fetchJobs();
@@ -1328,6 +1338,32 @@ function JobBoard({ user, onViewPortfolio }) {
   const handleCompleteJob = (job) => {
     setCompletingJob(job);
     setCompletionPhotos([]);
+  };
+
+  // Post-job mutual rating: whichever party hasn't rated yet submits here
+  // (poster rates the helper, helper rates the poster).
+  const handleSubmitJobRating = async (job) => {
+    setSubmittingJobRating(true);
+    try {
+      const isPoster = isPosterForJob(job);
+      await axios.post(`${API_URL}/api/jobs/${job._id}/review`, {
+        rating: myJobRating,
+        comment: myJobRatingComment,
+        target: isPoster ? 'provider' : 'poster'
+      }, { headers: { Authorization: `Bearer ${token}` } });
+      showMsg('⭐ Thanks! Your rating was submitted.');
+      setMyJobRatingComment('');
+      setMyJobRating(5);
+      try {
+        const res = await axios.get(`${API_URL}/api/jobs/${job._id}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+        if (res.data) setViewingJob(res.data);
+      } catch (_) { /* list refresh below still updates cards */ }
+      await fetchMyJobs(); await fetchMyApplications();
+    } catch (err) {
+      showMsg(err.response?.data?.error || 'Failed to submit rating');
+    } finally {
+      setSubmittingJobRating(false);
+    }
   };
 
   const handlePing = async (jobId) => {
@@ -4318,6 +4354,31 @@ function JobBoard({ user, onViewPortfolio }) {
                       ✅ Job fully completed.
                     </div>
                   )}
+                  {viewingJob.status === 'completed' && (() => {
+                    const iAmPoster = isPosterForJob(viewingJob);
+                    const iHaveRated = iAmPoster ? viewingJob.posterReviewed : viewingJob.providerReviewed;
+                    if (iHaveRated) {
+                      return (
+                        <div style={{ marginBottom: 8, padding: '10px 12px', borderRadius: 10, background: '#fefce8', border: '1px solid #fde68a', color: '#854d0e', fontSize: 12, fontWeight: 700 }}>
+                          ⭐ You rated the {iAmPoster ? 'helper' : 'job provider'}. Thanks for the feedback!
+                        </div>
+                      );
+                    }
+                    return (
+                      <div style={{ marginBottom: 8, padding: 12, borderRadius: 12, background: '#fffbeb', border: '2px solid #f59e0b' }}>
+                        <div style={{ fontSize: 13, fontWeight: 800, color: '#92400e', marginBottom: 8 }}>⭐ Rate the {iAmPoster ? 'helper' : 'job provider'}</div>
+                        <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 8 }}>
+                          {[1, 2, 3, 4, 5].map(star => (
+                            <button key={star} onClick={() => setMyJobRating(star)} style={{ border: 'none', background: 'transparent', fontSize: 30, cursor: 'pointer', padding: 2, filter: star <= myJobRating ? 'none' : 'grayscale(1) opacity(0.35)' }}>⭐</button>
+                          ))}
+                        </div>
+                        <input value={myJobRatingComment} onChange={e => setMyJobRatingComment(e.target.value)} placeholder="Optional comment..." style={{ width: '100%', boxSizing: 'border-box', padding: 10, borderRadius: 10, border: '1px solid #fde68a', fontSize: 13, marginBottom: 8 }} />
+                        <button onClick={() => handleSubmitJobRating(viewingJob)} disabled={submittingJobRating} style={{ width: '100%', padding: '11px 12px', borderRadius: 10, border: 'none', background: 'linear-gradient(135deg, #f59e0b, #d97706)', color: 'white', fontSize: 13, fontWeight: 800, cursor: submittingJobRating ? 'not-allowed' : 'pointer', opacity: submittingJobRating ? 0.6 : 1 }}>
+                          {submittingJobRating ? '⏳ Submitting...' : `Submit ${myJobRating}★ Rating`}
+                        </button>
+                      </div>
+                    );
+                  })()}
                   <div style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>When job is done, submit completion and proceed to payment QR confirmation.</div>
                   <button onClick={() => handleCompleteJob(viewingJob)} disabled={!!viewingJob.completionRequest?.status || ['pending_review', 'pending_payment', 'completed'].includes(viewingJob.status)} style={{ width: '100%', padding: '10px 12px', borderRadius: 12, border: 'none', background: '#4f46e5', color: 'white', fontSize: 12, fontWeight: 800, cursor: (viewingJob.completionRequest?.status || ['pending_review', 'pending_payment', 'completed'].includes(viewingJob.status)) ? 'not-allowed' : 'pointer', opacity: (viewingJob.completionRequest?.status || ['pending_review', 'pending_payment', 'completed'].includes(viewingJob.status)) ? 0.6 : 1 }}>Mark done & continue</button>
                   {viewingJob.status === 'pending_payment' && (

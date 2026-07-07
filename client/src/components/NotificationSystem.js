@@ -34,7 +34,7 @@ const TYPE_CONFIG = {
 };
 
 // Critical notifications that require action and should NOT auto-dismiss
-const CRITICAL_TYPES = ['application_approved', 'offer_accepted', 'job_started', 'completion_requested', 'job_pending_payment'];
+const CRITICAL_TYPES = ['application_received', 'negotiation_updated', 'application_approved', 'offer_accepted', 'job_started', 'completion_requested', 'job_pending_payment', 'issue_reported'];
 
 const DEFAULT_CONFIG = { color: '#64748b', icon: '📢', bg: '#f8fafc', route: '/dashboard', actionLabel: 'View', actionType: 'secondary' };
 
