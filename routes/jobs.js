@@ -1005,6 +1005,17 @@ router.post('/:id/report-issue', auth, upload.array('photos', 10), async (req, r
     await prisma.job.update({ where: { id: job.id }, data: { issueReports } });
 
     res.json({ message: 'Issue reported' });
+
+    const { isPoster, acceptedApplicantId } = getJobParties(job, req.userId);
+    const otherPartyId = isPoster ? acceptedApplicantId : job.posterId;
+    if (otherPartyId) {
+      notify(req, otherPartyId, {
+        type: 'issue_reported',
+        title: '⚠️ Issue Reported',
+        message: `${isPoster ? 'The job provider' : 'Your helper'} reported an issue on "${job.title}"`,
+        jobId: job.id
+      });
+    }
   } catch (err) {
     console.error('Report issue error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -1054,6 +1065,17 @@ router.post('/:id/upload-proof', auth, upload.array('photos', 10), async (req, r
     await prisma.job.update({ where: { id: job.id }, data: { workProofPhotos } });
 
     res.json({ message: `${cleanStage.charAt(0).toUpperCase() + cleanStage.slice(1)} photos uploaded`, count: photos.length });
+
+    const { isPoster, acceptedApplicantId } = getJobParties(job, req.userId);
+    const otherPartyId = isPoster ? acceptedApplicantId : job.posterId;
+    if (otherPartyId) {
+      notify(req, otherPartyId, {
+        type: 'photos_uploaded',
+        title: '📸 New Photos Uploaded',
+        message: `${isPoster ? 'The job provider' : 'Your helper'} uploaded ${cleanStage} photos for "${job.title}"`,
+        jobId: job.id
+      });
+    }
   } catch (err) {
     console.error('Upload proof error:', err);
     res.status(500).json({ error: 'Server error' });

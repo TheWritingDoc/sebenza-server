@@ -227,6 +227,18 @@ function CameraCapture({ onCapture, onClose, multiple = false, enforceCamera = f
         </div>
       ) : (
         <>
+          <button
+            onClick={() => { stopCamera(); onClose(); }}
+            aria-label="Close camera"
+            style={{ position: 'absolute', top: 16, left: 16, width: 40, height: 40, borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.55)', color: 'white', fontSize: 20, lineHeight: 1, cursor: 'pointer', zIndex: 1 }}
+          >
+            ✕
+          </button>
+          {multiple && captured.length > 0 && (
+            <div style={{ position: 'absolute', top: 16, right: 16, background: 'rgba(0,0,0,0.6)', color: 'white', padding: '6px 12px', borderRadius: 999, fontSize: 13, fontWeight: 700 }}>
+              {captured.length} captured
+            </div>
+          )}
           <video
             ref={videoRef}
             autoPlay
@@ -234,31 +246,23 @@ function CameraCapture({ onCapture, onClose, multiple = false, enforceCamera = f
             muted
             style={{ flex: 1, objectFit: 'cover', width: '100%' }}
           />
-          {multiple && captured.length > 0 && (
-            <div style={{ position: 'absolute', top: 16, right: 16, background: 'rgba(0,0,0,0.6)', color: 'white', padding: '6px 12px', borderRadius: 999, fontSize: 13, fontWeight: 700 }}>
-              {captured.length} captured
+          <div style={{ position: 'relative', padding: '18px 20px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20, background: 'rgba(0,0,0,0.8)' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+              <button
+                onClick={capture}
+                aria-label="Take photo"
+                style={{ width: 68, height: 68, borderRadius: '50%', border: '4px solid white', background: '#6366f1', cursor: 'pointer' }}
+              />
+              <span style={{ color: 'white', fontSize: 11, fontWeight: 600, opacity: 0.85 }}>Tap to capture</span>
             </div>
-          )}
-          <div style={{ padding: 20, display: 'flex', justifyContent: 'center', gap: 20, background: 'rgba(0,0,0,0.8)' }}>
-            <button
-              onClick={capture}
-              aria-label="Take photo"
-              style={{ width: 64, height: 64, borderRadius: '50%', border: '4px solid white', background: '#6366f1', cursor: 'pointer' }}
-            />
-            {multiple && (
+            {multiple && captured.length > 0 && (
               <button
                 onClick={handleDone}
-                style={{ padding: '12px 24px', borderRadius: 12, border: 'none', background: '#22c55e', color: 'white', fontWeight: 700, cursor: 'pointer' }}
+                style={{ position: 'absolute', top: '50%', right: 20, transform: 'translateY(-50%)', padding: '14px 22px', borderRadius: 14, border: 'none', background: '#22c55e', color: 'white', fontWeight: 800, fontSize: 14, cursor: 'pointer', boxShadow: '0 4px 16px rgba(34,197,94,0.4)' }}
               >
-                Done
+                ✓ Done ({captured.length})
               </button>
             )}
-            <button
-              onClick={() => { stopCamera(); onClose(); }}
-              style={{ padding: '12px 24px', borderRadius: 12, border: 'none', background: '#ef4444', color: 'white', fontWeight: 700, cursor: 'pointer' }}
-            >
-              Cancel
-            </button>
           </div>
         </>
       )}

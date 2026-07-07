@@ -30,6 +30,7 @@ const TYPE_CONFIG = {
   qr_handshake_ready:   { color: '#3b82f6', icon: '📱', bg: '#eff6ff', route: '/jobs', actionLabel: 'Open QR', actionType: 'primary' },
   job_nearby:           { color: '#3b82f6', icon: '📍', bg: '#eff6ff', route: '/jobs', actionLabel: 'View', actionType: 'primary' },
   service_nearby:       { color: '#8b5cf6', icon: '💼', bg: '#f5f3ff', route: '/map', actionLabel: 'View Map', actionType: 'primary' },
+  issue_reported:       { color: '#ef4444', icon: '⚠️', bg: '#fef2f2', route: '/jobs', actionLabel: 'View Issue', actionType: 'primary' },
 };
 
 // Critical notifications that require action and should NOT auto-dismiss

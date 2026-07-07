@@ -49,7 +49,7 @@ function JobCompleteWorkflow({ job, onClose, onCompleted }) {
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: 20 }}>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10041, padding: 20 }}>
       <div style={{ background: 'white', borderRadius: 20, padding: 24, maxWidth: 400, width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
         <h3 style={{ fontSize: 18, fontWeight: 800, marginBottom: 4, color: '#1e293b' }}>Complete Job</h3>
         <p style={{ fontSize: 13, color: '#64748b', marginBottom: 16 }}>{job?.title}</p>
