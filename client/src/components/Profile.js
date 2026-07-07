@@ -175,6 +175,29 @@ function Profile({ user, setUser }) {
           </button>
         </form>
       </div>
+
+      {!window.Capacitor?.isNativePlatform?.() && (
+        <div style={{
+          marginTop: 20, padding: 20, borderRadius: 16,
+          background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', color: 'white'
+        }}>
+          <div style={{ fontSize: 15, fontWeight: 800, marginBottom: 6 }}>Get the Android app</div>
+          <div style={{ fontSize: 13, opacity: 0.9, marginBottom: 14 }}>
+            Install Sebenza on your phone for the full app experience.
+          </div>
+          <a
+            href={`${API_URL}/downloads/sebenza.apk`}
+            download
+            style={{
+              display: 'inline-block', padding: '10px 18px', borderRadius: 12,
+              background: 'white', color: '#4f46e5', fontWeight: 700, fontSize: 14,
+              textDecoration: 'none'
+            }}
+          >
+            Download APK
+          </a>
+        </div>
+      )}
     </div>
   );
 }

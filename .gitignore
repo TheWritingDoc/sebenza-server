@@ -1,6 +1,7 @@
 .env
 uploads/
-downloads/
+downloads/*
+!downloads/sebenza.apk
 *.backup*
 *.log
 node_modules/
@@ -14,3 +15,6 @@ client/build/static/css/*.map
 
 # Claude Code local permission/cache files.
 .claude/settings.local.json
+
+# Android signing keystore — never commit private keys/passwords.
+client/android/keystore/
