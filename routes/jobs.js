@@ -841,39 +841,6 @@ router.post('/:id/applications/:appId/confirm', auth, async (req, res) => {
   }
 });
 
-// ─── POST /api/jobs/:id/start — Poster starts job after helper confirms ───
-router.post('/:id/start', auth, async (req, res) => {
-  try {
-    if (!isId(req.params.id)) return res.status(400).json({ error: 'Cannot start job' });
-    const guard = await prisma.job.updateMany({
-      where: { id: req.params.id, posterId: req.userId, status: 'accepted' },
-      data: { status: 'in_progress', startedAt: new Date() }
-    });
-    if (guard.count === 0) return res.status(400).json({ error: 'Cannot start job' });
-    res.json({ message: 'Job started' });
-
-    try {
-      const job = await prisma.job.findUnique({ where: { id: req.params.id }, select: { id: true, title: true, acceptedApplicationId: true } });
-      const acceptedApp = job?.acceptedApplicationId
-        ? await prisma.application.findUnique({ where: { id: job.acceptedApplicationId }, select: { applicantId: true } })
-        : null;
-      if (acceptedApp) {
-        notify(req, acceptedApp.applicantId, {
-          type: 'job_started',
-          title: 'Job Started 🚀',
-          message: `"${job.title}" is now in progress`,
-          jobId: job.id
-        });
-      }
-    } catch (notifyErr) {
-      console.error('Start notify error:', notifyErr.message);
-    }
-  } catch (err) {
-    console.error('Start job error:', err);
-    res.status(500).json({ error: 'Server error' });
-  }
-});
-
 // ─── POST /api/jobs/:id/applications/:appId/decline ───
 router.post('/:id/applications/:appId/decline', auth, async (req, res) => {
   try {
@@ -1212,35 +1179,42 @@ router.post('/:id/confirm-completion', auth, upload.array('photos', 10), async (
     if (!job) return res.status(404).json({ error: 'Job not found' });
     if (job.status !== 'pending_review') return res.status(400).json({ error: `Cannot confirm: job is ${job.status}` });
 
+    // The rating may arrive here inline, or have been submitted separately via
+    // POST /:id/review first (the app does the latter). Require one of the two;
+    // never apply it twice.
     const ratingNum = parseInt(rating);
-    if (isNaN(ratingNum) || ratingNum < 1 || ratingNum > 5) {
+    const hasInlineRating = !isNaN(ratingNum) && ratingNum >= 1 && ratingNum <= 5;
+    if (!hasInlineRating && !job.posterReviewed) {
       return res.status(400).json({ error: 'Rating must be an integer between 1 and 5' });
     }
 
     // Confirmation photos accepted for parity but not persisted separately
     if (req.files && req.files.length > 0) await uploadFiles(req.files, 'proof');
 
-    await prisma.job.update({
-      where: { id: job.id },
-      data: {
-        status: 'pending_payment',
-        posterConfirmedAt: new Date(),
-        posterReviewed: true,
-        posterReview: {
-          overallRating: ratingNum,
-          comment: comment ? sanitizeString(comment, MAX_REVIEW) : '',
-          createdAt: new Date()
-        }
-      }
-    });
+    const data = {
+      status: 'pending_payment',
+      posterConfirmedAt: new Date()
+    };
+    const applyInlineRating = hasInlineRating && !job.posterReviewed;
+    if (applyInlineRating) {
+      data.posterReviewed = true;
+      data.posterReview = {
+        overallRating: ratingNum,
+        comment: comment ? sanitizeString(comment, MAX_REVIEW) : '',
+        createdAt: new Date()
+      };
+    }
+    await prisma.job.update({ where: { id: job.id }, data });
 
     res.json({ message: 'Completion confirmed, awaiting payment' });
 
     // The poster's rating counts toward the provider's community stars.
-    try {
-      const { acceptedApp: ratedApp } = getJobParties(job, req.userId);
-      if (ratedApp) await applyRatingToUser(String(ratedApp.applicantId), ratingNum);
-    } catch (e) { console.error('confirm-completion rating error:', e.message); }
+    if (applyInlineRating) {
+      try {
+        const { acceptedApp: ratedApp } = getJobParties(job, req.userId);
+        if (ratedApp) await applyRatingToUser(String(ratedApp.applicantId), ratingNum);
+      } catch (e) { console.error('confirm-completion rating error:', e.message); }
+    }
 
     try {
       const { acceptedApp } = getJobParties(job, req.userId);
