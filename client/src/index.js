@@ -60,47 +60,68 @@ window.addEventListener('error', (event) => {
   }
 });
 
-// Global back-button handler for mobile hardware back button
-// Tracks modal/modal-like state and intercepts browser back to close them first
+// Global back-button handler for mobile hardware back button.
+// Every open overlay pushes ONE close handler + ONE dummy history entry, so
+// hardware back closes overlays top-down before it ever navigates or exits
+// the app. When an overlay is closed through its own UI (✕ / Done), the
+// matching dummy entry is consumed so history never accumulates dead entries
+// (dead entries made back "do nothing", then exit the app unexpectedly).
 (function setupHardwareBackButton() {
   if (typeof window === 'undefined') return;
 
-  // Stack of close functions — LIFO
-  const backStack = [];
-  let lastPop = 0;
+  const backStack = []; // LIFO of close functions, one dummy history entry each
+  let suppressPops = 0; // popstate events we triggered ourselves (entry cleanup)
+  let pendingConsume = 0;
+  let consumeScheduled = false;
 
   window.__sebenzaBackStack = backStack;
 
   window.pushBackHandler = (closeFn) => {
     backStack.push(closeFn);
-    // Push a dummy history state so back button fires popstate
     if (window.history && window.history.pushState) {
       window.history.pushState({ __sebenzaBack: true, ts: Date.now() }, '');
     }
   };
 
+  // Batch history cleanup: several overlays can close in the same tick
+  // (e.g. job completion closes WorkHub + QR + summary); one go(-n) handles all.
+  const scheduleConsume = () => {
+    if (consumeScheduled) return;
+    consumeScheduled = true;
+    setTimeout(() => {
+      consumeScheduled = false;
+      const n = pendingConsume;
+      pendingConsume = 0;
+      if (n > 0 && window.history.state && window.history.state.__sebenzaBack) {
+        suppressPops += 1; // go(-n) fires a single popstate
+        window.history.go(-n);
+      }
+    }, 0);
+  };
+
   window.popBackHandler = (closeFn) => {
     const idx = backStack.lastIndexOf(closeFn);
-    if (idx !== -1) backStack.splice(idx, 1);
+    if (idx !== -1) {
+      backStack.splice(idx, 1);
+      pendingConsume += 1;
+      scheduleConsume();
+    }
   };
 
   window.addEventListener('popstate', (e) => {
-    const now = Date.now();
-    // Debounce: some browsers fire double popstate
-    if (now - lastPop < 200) return;
-    lastPop = now;
-
-    // If we have an active modal/modal-like overlay, close it instead of navigating away
+    if (suppressPops > 0) {
+      suppressPops -= 1;
+      return;
+    }
     if (backStack.length > 0) {
       const closeFn = backStack.pop();
       if (typeof closeFn === 'function') {
         try { closeFn(); } catch (err) { console.error('[BackButton] close error:', err); }
       }
-      // Push another dummy state so next back also intercepts if still needed
-      if (backStack.length > 0 && window.history && window.history.pushState) {
-        window.history.pushState({ __sebenzaBack: true, ts: Date.now() }, '');
-      }
-      // Prevent default navigation by not letting the popstate propagate to router
+      // The dummy entry for this overlay was consumed by this very back press;
+      // remaining overlays still own their entries — nothing to re-push. The
+      // overlay's effect cleanup will call popBackHandler, which no-ops because
+      // the fn is already off the stack.
       e.stopImmediatePropagation?.();
     }
   });

@@ -1,72 +1,230 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { TrustStars, BehaviourBadges } from './TrustCenter';
+import useBodyScrollLock from '../shared/useBodyScrollLock';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
+// Full profile sheet: identity + community trust, verified past work (photos
+// taken through the app on completed jobs), experience, skills and reviews.
+// Rendered ABOVE every job modal (z 10060 > modalOverlayStyle 10040) so
+// "View Profile" works from inside the applicants/apply/details modals.
 function ProviderPortfolio({ providerId, providerName, onClose }) {
+  useBodyScrollLock();
   const [provider, setProvider] = useState(null);
+  const [trust, setTrust] = useState(null);
+  const [verifiedWork, setVerifiedWork] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [photoView, setPhotoView] = useState(null);
 
   useEffect(() => {
-    const fetchProvider = async () => {
+    let cancelled = false;
+    const token = localStorage.getItem('token');
+    const load = async () => {
       try {
-        const res = await axios.get(`${API_URL}/api/users/${providerId}`);
-        setProvider(res.data);
+        const [userRes, trustRes, workRes] = await Promise.all([
+          axios.get(`${API_URL}/api/users/${providerId}`),
+          axios.get(`${API_URL}/api/users/${providerId}/trust`, { headers: token ? { Authorization: `Bearer ${token}` } : {} }).catch(() => null),
+          axios.get(`${API_URL}/api/users/${providerId}/verified-work`).catch(() => null),
+        ]);
+        if (cancelled) return;
+        setProvider(userRes.data);
+        setTrust(trustRes?.data || null);
+        setVerifiedWork(workRes?.data?.work || []);
       } catch (err) {
-        console.error('Error fetching provider:', err);
+        console.error('Error fetching provider profile:', err);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
-    fetchProvider();
+    load();
+    return () => { cancelled = true; };
   }, [providerId]);
 
-  if (loading) {
-    return (
-      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000 }}>
-        <div style={{ background: 'white', borderRadius: 20, padding: 40, textAlign: 'center' }}>
-          <div style={{ fontSize: 32, marginBottom: 16 }}>⏳</div>
-          <p>Loading profile...</p>
-        </div>
-      </div>
-    );
-  }
+  const stats = provider?.communityStats || {};
+  const imgUrl = (u) => (u && u.startsWith('http') ? u : `${API_URL}${u}`);
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: 20 }}>
-      <div style={{ background: 'white', borderRadius: 20, padding: 24, maxWidth: 500, width: '100%', maxHeight: '90vh', overflowY: 'auto' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-          <h2 style={{ fontSize: 20, fontWeight: 800, color: '#1e293b' }}>{provider?.name || providerName || 'Provider'}</h2>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 24, cursor: 'pointer', color: '#64748b' }}>✕</button>
-        </div>
-
-        <div style={{ textAlign: 'center', marginBottom: 20 }}>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.55)', zIndex: 10060, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }} onClick={onClose}>
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: '#f1f5f9', width: '100%', maxWidth: 560,
+          height: window.innerWidth < 640 ? '94dvh' : '88vh',
+          borderRadius: '24px 24px 0 0', display: 'flex', flexDirection: 'column', overflow: 'hidden'
+        }}
+      >
+        {/* Header */}
+        <div style={{ background: 'white', borderBottom: '1px solid #e2e8f0', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
           <div style={{
-            width: 80, height: 80, borderRadius: '50%', margin: '0 auto 12px',
-            background: provider?.profileImage ? `url(${API_URL}${provider.profileImage}) center/cover` : 'linear-gradient(135deg, #6366f1, #4f46e5)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 32, color: 'white', fontWeight: 700
+            width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
+            background: provider?.profileImage ? `url(${imgUrl(provider.profileImage)}) center/cover` : 'linear-gradient(135deg, #6366f1, #4f46e5)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, color: 'white', fontWeight: 700
           }}>
-            {!provider?.profileImage && (provider?.name?.charAt(0).toUpperCase() || '?')}
+            {!provider?.profileImage && ((provider?.name || providerName || '?').charAt(0).toUpperCase())}
           </div>
-          <p style={{ fontSize: 14, color: '#64748b' }}>{provider?.bio || 'No bio yet'}</p>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {provider?.name || providerName || 'Profile'}
+              {provider?.verified && <span style={{ marginLeft: 6, fontSize: 12, color: '#059669', fontWeight: 800 }}>✓ Verified</span>}
+            </div>
+            <div style={{ fontSize: 11, color: '#64748b' }}>Profile & verified past work</div>
+          </div>
+          <button onClick={onClose} aria-label="Close" style={{ width: 40, height: 40, borderRadius: '50%', border: '1px solid #e2e8f0', background: 'white', color: '#64748b', fontSize: 18, fontWeight: 700, cursor: 'pointer', flexShrink: 0 }}>✕</button>
         </div>
 
-        {provider?.services && provider.services.length > 0 && (
-          <div>
-            <h3 style={{ fontSize: 16, fontWeight: 700, marginBottom: 12, color: '#1e293b' }}>Services</h3>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {provider.services.map(service => (
-                <div key={service._id} style={{ padding: 14, borderRadius: 12, border: '1px solid #e2e8f0', background: '#f8fafc' }}>
-                  <div style={{ fontWeight: 600, fontSize: 14 }}>{service.title}</div>
-                  <div style={{ fontSize: 12, color: '#64748b', marginTop: 4 }}>{service.description}</div>
-                  <div style={{ fontSize: 12, color: '#6366f1', fontWeight: 700, marginTop: 6 }}>R{service.randAmount || 0}</div>
-                </div>
-              ))}
+        <div style={{ flex: 1, overflowY: 'auto', padding: 16, WebkitOverflowScrolling: 'touch' }}>
+          {loading ? (
+            <div style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>
+              <div style={{ fontSize: 32, marginBottom: 12 }}>⏳</div>
+              Loading profile...
             </div>
-          </div>
-        )}
+          ) : !provider ? (
+            <div style={{ textAlign: 'center', padding: 40, color: '#64748b' }}>Profile not found</div>
+          ) : (
+            <>
+              {/* Trust */}
+              {trust && (
+                <div style={{ background: 'white', borderRadius: 16, padding: 14, marginBottom: 12, border: '1px solid #e2e8f0' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b' }}>Identity</span>
+                    <TrustStars stars={trust.stars} size={16} max={5} />
+                    {trust.level && <span style={{ fontSize: 12, fontWeight: 700, color: '#b45309' }}>{trust.level}</span>}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b' }}>Community</span>
+                    {trust.community?.stars != null ? (
+                      <>
+                        <TrustStars stars={trust.community.stars} size={16} max={5} />
+                        <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 700 }}>{trust.community.reviews} review{trust.community.reviews === 1 ? '' : 's'}</span>
+                      </>
+                    ) : (
+                      <span style={{ fontSize: 11, color: '#94a3b8' }}>No ratings yet</span>
+                    )}
+                    <BehaviourBadges flags={trust.community?.flags} />
+                  </div>
+                  {trust.totalStars != null && (
+                    <div style={{ fontSize: 12, fontWeight: 800, color: '#4f46e5', marginTop: 6 }}>Total trust: {trust.totalStars} / 10</div>
+                  )}
+                </div>
+              )}
+
+              {/* Stats */}
+              <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+                {[
+                  [stats.receivedRatingsAvg > 0 ? stats.receivedRatingsAvg.toFixed(1) : '—', 'Rating'],
+                  [`${stats.reliabilityScore ?? 100}%`, 'Reliability'],
+                  [stats.jobsCompleted || 0, 'Jobs Done'],
+                ].map(([val, lbl]) => (
+                  <div key={lbl} style={{ flex: 1, background: 'white', borderRadius: 14, padding: '12px 8px', textAlign: 'center', border: '1px solid #e2e8f0' }}>
+                    <div style={{ fontSize: 20, fontWeight: 800, color: '#4f46e5' }}>{val}</div>
+                    <div style={{ fontSize: 10, color: '#94a3b8', fontWeight: 700 }}>{lbl}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Bio */}
+              {provider.bio && (
+                <div style={{ background: 'white', borderRadius: 16, padding: 14, marginBottom: 12, border: '1px solid #e2e8f0', fontSize: 13, color: '#475569', lineHeight: 1.5 }}>
+                  {provider.bio}
+                </div>
+              )}
+
+              {/* Verified past work — photos taken through the app on completed jobs */}
+              <div style={{ background: 'white', borderRadius: 16, padding: 14, marginBottom: 12, border: '1px solid #e2e8f0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: '#1e293b' }}>🛠 Past Work</div>
+                  <span style={{ background: '#d1fae5', color: '#065f46', padding: '3px 10px', borderRadius: 12, fontSize: 10, fontWeight: 800 }}>✓ Verified by Sebenza</span>
+                </div>
+                <p style={{ fontSize: 11, color: '#94a3b8', margin: '0 0 10px' }}>Real jobs completed through the app — photos taken on site with the in-app camera.</p>
+                {verifiedWork.length === 0 ? (
+                  <div style={{ fontSize: 12, color: '#94a3b8', textAlign: 'center', padding: '14px 0' }}>No completed jobs yet — every finished job builds this record.</div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {verifiedWork.map(w => (
+                      <div key={w.jobId} style={{ padding: '10px 12px', borderRadius: 12, background: '#f8fafc', border: '1px solid #f1f5f9' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div style={{ fontWeight: 700, fontSize: 13, color: '#1e293b' }}>{w.title}</div>
+                            <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>
+                              {[w.category, w.completedAt && new Date(w.completedAt).toLocaleDateString()].filter(Boolean).join(' · ')}
+                            </div>
+                          </div>
+                          {w.rating && <span style={{ fontSize: 11, color: '#f59e0b', fontWeight: 700, whiteSpace: 'nowrap' }}>{'⭐'.repeat(w.rating)}</span>}
+                        </div>
+                        {w.photos?.length > 0 && (
+                          <div style={{ display: 'flex', gap: 6, marginTop: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+                            {w.photos.map((p, i) => (
+                              <img key={i} src={imgUrl(p.url)} alt={`${w.title} — on-site photo`}
+                                onClick={() => setPhotoView(imgUrl(p.url))}
+                                style={{ width: 68, height: 68, objectFit: 'cover', borderRadius: 10, flexShrink: 0, cursor: 'pointer', border: '1px solid #e2e8f0' }} />
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Work experience */}
+              {provider.workExperience?.length > 0 && (
+                <div style={{ background: 'white', borderRadius: 16, padding: 14, marginBottom: 12, border: '1px solid #e2e8f0' }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: '#1e293b', marginBottom: 8 }}>💼 Work Experience</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {provider.workExperience.map((w, i) => (
+                      <div key={i} style={{ padding: '10px 12px', borderRadius: 10, background: '#f8fafc', border: '1px solid #f1f5f9' }}>
+                        <div style={{ fontWeight: 700, fontSize: 13, color: '#1e293b' }}>{w.title}</div>
+                        <div style={{ fontSize: 11, color: '#64748b', marginTop: 2 }}>{[w.place, w.years].filter(Boolean).join(' · ')}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Skills */}
+              {provider.skills?.length > 0 && (
+                <div style={{ background: 'white', borderRadius: 16, padding: 14, marginBottom: 12, border: '1px solid #e2e8f0' }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: '#1e293b', marginBottom: 8 }}>Skills</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                    {provider.skills.map(skill => (
+                      <span key={skill} style={{ background: '#f3f4f6', color: '#374151', padding: '5px 12px', borderRadius: 20, fontSize: 12, fontWeight: 600 }}>{skill}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Reviews */}
+              {provider.reviews?.length > 0 && (
+                <div style={{ background: 'white', borderRadius: 16, padding: 14, marginBottom: 12, border: '1px solid #e2e8f0' }}>
+                  <div style={{ fontSize: 14, fontWeight: 800, color: '#1e293b', marginBottom: 8 }}>⭐ Community Feedback ({provider.reviews.length})</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {provider.reviews.slice(0, 10).map((r, i) => (
+                      <div key={r._id || i} style={{ padding: '10px 12px', borderRadius: 10, background: '#f8fafc', borderLeft: '3px solid #6366f1' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                          <span style={{ fontSize: 12, fontWeight: 700, color: '#374151' }}>{r.reviewerId?.name || 'Neighbour'}</span>
+                          <span style={{ fontSize: 11, color: '#f59e0b', fontWeight: 700 }}>{'⭐'.repeat(r.overallRating || 0)}</span>
+                        </div>
+                        {r.comment && <div style={{ fontSize: 12, color: '#475569', fontStyle: 'italic', marginTop: 4 }}>"{r.comment}"</div>}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
       </div>
+
+      {/* Full-screen photo viewer */}
+      {photoView && (
+        <div onClick={(e) => { e.stopPropagation(); setPhotoView(null); }} style={{
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', zIndex: 10061,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, cursor: 'zoom-out'
+        }}>
+          <img src={photoView} alt="Work" style={{ maxWidth: '100%', maxHeight: '90vh', borderRadius: 12 }} />
+        </div>
+      )}
     </div>
   );
 }

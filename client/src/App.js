@@ -9,6 +9,7 @@ import InvitePage from './components/InvitePage';
 import NotificationSystem from './components/NotificationSystem';
 import './index.css';
 import { Home as HomeIcon, Briefcase, ClipboardList, UserCircle, Plus, Bell } from './components/Icons';
+import useHardwareBackClose from './shared/useHardwareBackClose';
 
 // Lazy-load heavy page components to reduce initial bundle size
 const Dashboard = lazy(() => import('./components/Dashboard'));
@@ -164,24 +165,10 @@ function App() {
     };
   }, [user]);
 
-  // Hardware back-button: register/unregister app-level modal close handlers
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.pushBackHandler) return;
-
-    const closePortfolio = () => setViewingPortfolio(null);
-    const closeChat = () => setActiveChat(null);
-    const closeNotif = () => setNotifOpen(false);
-
-    if (notifOpen) window.pushBackHandler(closeNotif);
-    if (activeChat) window.pushBackHandler(closeChat);
-    if (viewingPortfolio) window.pushBackHandler(closePortfolio);
-
-    return () => {
-      if (viewingPortfolio) window.popBackHandler(closePortfolio);
-      if (activeChat) window.popBackHandler(closeChat);
-      if (notifOpen) window.popBackHandler(closeNotif);
-    };
-  }, [viewingPortfolio, activeChat, notifOpen]);
+  // Hardware back-button: app-level overlays register once on open.
+  useHardwareBackClose(notifOpen, () => setNotifOpen(false));
+  useHardwareBackClose(!!activeChat, () => setActiveChat(null));
+  useHardwareBackClose(!!viewingPortfolio, () => setViewingPortfolio(null));
 
   const handleLogin = (userData) => {
     setUser(userData);
@@ -283,7 +270,7 @@ function App() {
 
         <BottomNav user={user} />
 
-        <Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ background: 'white', borderRadius: 14, padding: '10px 14px', fontSize: 13, fontWeight: 700, color: '#334155' }}>Loading profile…</div></div>}>
+        <Suspense fallback={<div style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.35)', zIndex: 10060, display: 'flex', alignItems: 'center', justifyContent: 'center' }}><div style={{ background: 'white', borderRadius: 14, padding: '10px 14px', fontSize: 13, fontWeight: 700, color: '#334155' }}>Loading profile…</div></div>}>
           {viewingPortfolio && (
             <ProviderPortfolio
               providerId={viewingPortfolio.id}

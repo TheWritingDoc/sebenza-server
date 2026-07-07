@@ -14,6 +14,7 @@ import { PLACEHOLDER_IMG, getImageUrl, categoryEmojis, categoryGradients, status
 import { scrollToRef, blurActiveInput, mobileFieldFocusScroll } from '../shared/workflowFocus';
 import { Briefcase, ClipboardList, Handshake, Plus, Eye, Users, Banknote, Clock, MessageCircle, ArrowRight } from './Icons';
 import useBodyScrollLock from '../shared/useBodyScrollLock';
+import useHardwareBackClose from '../shared/useHardwareBackClose';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -203,58 +204,28 @@ function JobBoard({ user, onViewPortfolio }) {
     }
   }, [searchParams, setSearchParams, isLoggedIn]);
 
-  // Hardware back-button: register/unregister modal close handlers
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.pushBackHandler) return;
-
-    const closeViewingJob = () => setViewingJob(null);
-    const closeWorkHub = () => { setWorkHubOpen(false); setWorkHubTab('overview'); };
-    const closePostingJob = () => setPostingJob(false);
-    const closeApplyingJob = () => setApplyingJob(null);
-    const closeViewingApplicants = () => setViewingApplicants(null);
-    const closeGallery = () => setShowGallery(false);
-    const closeQrHandshake = () => setQrHandshakeJob(null);
-    const closePaymentHandshake = () => setPaymentHandshakeJob(null);
-    const closeCompletingJob = () => setCompletingJob(null);
-    const closeCompletionSummary = () => setViewingCompletionSummary(null);
-    const closeReportingIssue = () => { setReportingIssueJob(null); setIssueNote(''); setIssuePhotos([]); };
-    const closeDoorbell = () => setDoorbellJob(null);
-    const closePingingJob = () => setPingingJob(null);
-    const closeApplicantCounter = () => setApplicantCounterJob(null);
-
-    // Push handlers for active modals (most recent first)
-    if (applicantCounterJob) window.pushBackHandler(closeApplicantCounter);
-    if (pingingJob) window.pushBackHandler(closePingingJob);
-    if (doorbellJob) window.pushBackHandler(closeDoorbell);
-    if (reportingIssueJob) window.pushBackHandler(closeReportingIssue);
-    if (viewingCompletionSummary) window.pushBackHandler(closeCompletionSummary);
-    if (completingJob) window.pushBackHandler(closeCompletingJob);
-    if (paymentHandshakeJob) window.pushBackHandler(closePaymentHandshake);
-    if (qrHandshakeJob) window.pushBackHandler(closeQrHandshake);
-    if (showGallery) window.pushBackHandler(closeGallery);
-    if (viewingApplicants) window.pushBackHandler(closeViewingApplicants);
-    if (applyingJob) window.pushBackHandler(closeApplyingJob);
-    if (postingJob) window.pushBackHandler(closePostingJob);
-    if (workHubOpen) window.pushBackHandler(closeWorkHub);
-    if (viewingJob) window.pushBackHandler(closeViewingJob);
-
-    return () => {
-      if (viewingJob) window.popBackHandler(closeViewingJob);
-      if (workHubOpen) window.popBackHandler(closeWorkHub);
-      if (postingJob) window.popBackHandler(closePostingJob);
-      if (applyingJob) window.popBackHandler(closeApplyingJob);
-      if (viewingApplicants) window.popBackHandler(closeViewingApplicants);
-      if (showGallery) window.popBackHandler(closeGallery);
-      if (qrHandshakeJob) window.popBackHandler(closeQrHandshake);
-      if (paymentHandshakeJob) window.popBackHandler(closePaymentHandshake);
-      if (completingJob) window.popBackHandler(closeCompletingJob);
-      if (viewingCompletionSummary) window.popBackHandler(closeCompletionSummary);
-      if (reportingIssueJob) window.popBackHandler(closeReportingIssue);
-      if (doorbellJob) window.popBackHandler(closeDoorbell);
-      if (pingingJob) window.popBackHandler(closePingingJob);
-      if (applicantCounterJob) window.popBackHandler(closeApplicantCounter);
-    };
-  }, [viewingJob, workHubOpen, postingJob, applyingJob, viewingApplicants, showGallery, qrHandshakeJob, paymentHandshakeJob, completingJob, viewingCompletionSummary, reportingIssueJob, doorbellJob, pingingJob, applicantCounterJob]);
+  // Hardware back-button: each overlay registers once on open, unregisters on
+  // close. Base surfaces first, floating modals after, so back closes the
+  // most-recently-opened layer first.
+  useHardwareBackClose(!!viewingJob, () => setViewingJob(null));
+  useHardwareBackClose(workHubOpen, () => {
+    setWorkHubOpen(false);
+    setWorkHubTab('overview');
+    if (location.pathname.startsWith('/jobs/workhub/')) navigate('/jobs', { replace: true });
+  });
+  useHardwareBackClose(postingJob, () => setPostingJob(false));
+  useHardwareBackClose(!!applyingJob, () => setApplyingJob(null));
+  useHardwareBackClose(!!viewingApplicants, () => setViewingApplicants(null));
+  useHardwareBackClose(showGallery, () => setShowGallery(false));
+  useHardwareBackClose(!!qrHandshakeJob, () => setQrHandshakeJob(null));
+  useHardwareBackClose(!!paymentHandshakeJob, () => setPaymentHandshakeJob(null));
+  useHardwareBackClose(!!completingJob, () => setCompletingJob(null));
+  useHardwareBackClose(!!confirmingJob, () => setConfirmingJob(null));
+  useHardwareBackClose(!!viewingCompletionSummary, () => setViewingCompletionSummary(null));
+  useHardwareBackClose(!!reportingIssueJob, () => { setReportingIssueJob(null); setIssueNote(''); setIssuePhotos([]); });
+  useHardwareBackClose(!!doorbellJob, () => setDoorbellJob(null));
+  useHardwareBackClose(!!applicantCounterJob, () => setApplicantCounterJob(null));
+  useHardwareBackClose(!!workflowAlert, () => setWorkflowAlert(null));
 
   const showMsg = useCallback((msg, timeout = 4000) => {
     setMessage(msg);
@@ -595,8 +566,10 @@ function JobBoard({ user, onViewPortfolio }) {
             if (latest.data.status === 'completed' && latest.data.paymentConfirmed) {
               setPaymentHandshakeJob(null);
               setViewingCompletionSummary(latest.data);
-              setWorkHubTab('complete');
-              setWorkHubOpen(true);
+              // Job done — close the Work Hub, summary takes over.
+              setWorkHubOpen(false);
+              setWorkHubTab('overview');
+              if (window.location.pathname.startsWith('/jobs/workhub/')) navigate('/jobs', { replace: true });
             }
             autoRouteWorkHub(latest.data, data.type || 'job_updated');
           }
@@ -683,9 +656,10 @@ function JobBoard({ user, onViewPortfolio }) {
             setViewingJob(res.data);
             setViewingCompletionSummary(res.data);
             setPaymentHandshakeJob(null);
-            setWorkHubTab('complete');
-            setWorkHubOpen(true);
-            autoRouteWorkHub(res.data, 'payment_confirmed');
+            // Job done — close the Work Hub, summary takes over.
+            setWorkHubOpen(false);
+            setWorkHubTab('overview');
+            if (window.location.pathname.startsWith('/jobs/workhub/')) navigate('/jobs', { replace: true });
             console.log(`[Client] Payment confirmed for job ${data.jobId}, showing completion summary`);
           }
         } catch (e) {
@@ -880,9 +854,10 @@ function JobBoard({ user, onViewPortfolio }) {
       if (latest.status === 'completed' && latest.paymentConfirmed) {
         setViewingJob(latest);
         setViewingCompletionSummary(latest);
-        setWorkHubTab('complete');
-        setWorkHubOpen(true);
-        autoRouteWorkHub(latest, 'payment_confirmed_sync');
+        // Job done — close the Work Hub, summary takes over.
+        setWorkHubOpen(false);
+        setWorkHubTab('overview');
+        if (window.location.pathname.startsWith('/jobs/workhub/')) navigate('/jobs', { replace: true });
       }
     }
   }, [paymentHandshakeJob?._id, myJobs, myApplications]);
@@ -1069,9 +1044,10 @@ function JobBoard({ user, onViewPortfolio }) {
       if (data.job) {
         setViewingJob(data.job);
         setViewingCompletionSummary(data.job);
-        setWorkHubTab('complete');
-        setWorkHubOpen(true);
-        autoRouteWorkHub(data.job, 'payment_confirmed');
+        // Job done — close the Work Hub, summary takes over.
+        setWorkHubOpen(false);
+        setWorkHubTab('overview');
+        if (window.location.pathname.startsWith('/jobs/workhub/')) navigate('/jobs', { replace: true });
       }
     }
     return data;
@@ -1196,9 +1172,10 @@ function JobBoard({ user, onViewPortfolio }) {
             showMsg('Payment confirmed! Funds released.');
             setPaymentHandshakeJob(null);
             setViewingCompletionSummary(res.data);
-            setWorkHubTab('complete');
-            setWorkHubOpen(true);
-            autoRouteWorkHub(res.data, 'payment_confirmed_poll');
+            // Job done — close the Work Hub, summary takes over.
+            setWorkHubOpen(false);
+            setWorkHubTab('overview');
+            if (window.location.pathname.startsWith('/jobs/workhub/')) navigate('/jobs', { replace: true });
           }
         }
       } catch (e) { /* ignore poll errors */ }
@@ -1567,6 +1544,19 @@ function JobBoard({ user, onViewPortfolio }) {
       if (location.pathname.startsWith('/jobs/workhub/')) {
         navigate(`/jobs?view=${job._id}`, { replace: true });
         showMsg('Work Hub unlocks only after both users complete QR handshake and the job starts.');
+      }
+      return;
+    }
+
+    // Fully completed: close the Work Hub — the completion summary takes over.
+    // Exception: if this user still owes their rating, keep the hub open on the
+    // Complete tab so the rating card stays reachable.
+    const iHaveRatedCompleted = isPosterForJob ? job.posterReviewed : job.providerReviewed;
+    if (job.status === 'completed' && job.paymentConfirmed && iHaveRatedCompleted) {
+      setWorkHubOpen(false);
+      setWorkHubTab('overview');
+      if (location.pathname.startsWith('/jobs/workhub/')) {
+        navigate('/jobs', { replace: true });
       }
       return;
     }

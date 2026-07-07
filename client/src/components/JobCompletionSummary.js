@@ -1,6 +1,9 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import axios from 'axios';
 import { getImageUrl, PLACEHOLDER_IMG, categoryEmojis } from '../shared/constants';
 import { scrollToRef } from '../shared/workflowFocus';
+
+const API_URL = process.env.REACT_APP_API_URL || '';
 
 function StarRating({ rating }) {
   const stars = [];
@@ -45,6 +48,14 @@ function Section({ title, icon, children, borderColor = '#e2e8f0', accentColor =
 export default function JobCompletionSummary({ job, userId, onClose, onPhotoClick }) {
   const paymentStatusRef = useRef(null);
   const issueReportsRef = useRef(null);
+
+  // Late rating: if the viewer hasn't rated yet (Work Hub auto-closes on
+  // completion), they can still submit their stars right here.
+  const [myRating, setMyRating] = useState(5);
+  const [myComment, setMyComment] = useState('');
+  const [submittingRating, setSubmittingRating] = useState(false);
+  const [ratingDone, setRatingDone] = useState(false);
+  const [ratingError, setRatingError] = useState('');
 
   useEffect(() => {
     if (!job) return;
@@ -283,6 +294,53 @@ export default function JobCompletionSummary({ job, userId, onClose, onPhotoClic
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* Rate the other party if the viewer hasn't yet */}
+          {(() => {
+            const uid = String(userId || '');
+            const iAmPoster = String(poster._id || poster.id || job.posterId || '') === uid;
+            const iAmProvider = String(provider._id || provider.id || '') === uid;
+            if (!iAmPoster && !iAmProvider) return null;
+            const iHaveRated = iAmPoster ? job.posterReviewed : job.providerReviewed;
+            if (iHaveRated || ratingDone) return null;
+            const otherLabel = iAmPoster ? providerName : posterName;
+            const submit = async () => {
+              setSubmittingRating(true);
+              setRatingError('');
+              try {
+                const token = localStorage.getItem('token');
+                await axios.post(`${API_URL}/api/jobs/${job._id}/review`, {
+                  rating: myRating,
+                  comment: myComment,
+                  target: iAmPoster ? 'provider' : 'poster'
+                }, { headers: { Authorization: `Bearer ${token}` } });
+                setRatingDone(true);
+              } catch (err) {
+                setRatingError(err.response?.data?.error || 'Failed to submit rating');
+              } finally {
+                setSubmittingRating(false);
+              }
+            };
+            return (
+              <Section title={`Rate ${otherLabel}`} icon="⭐" borderColor="#f59e0b" accentColor="#92400e">
+                <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 10 }}>
+                  {[1, 2, 3, 4, 5].map(star => (
+                    <button key={star} onClick={() => setMyRating(star)} style={{ border: 'none', background: 'transparent', fontSize: 32, cursor: 'pointer', padding: 2, filter: star <= myRating ? 'none' : 'grayscale(1) opacity(0.35)' }}>⭐</button>
+                  ))}
+                </div>
+                <input value={myComment} onChange={e => setMyComment(e.target.value)} placeholder="Optional comment..." style={{ width: '100%', boxSizing: 'border-box', padding: 10, borderRadius: 10, border: '1px solid #fde68a', fontSize: 13, marginBottom: 10 }} />
+                {ratingError && <div style={{ fontSize: 12, color: '#dc2626', fontWeight: 700, marginBottom: 8 }}>{ratingError}</div>}
+                <button onClick={submit} disabled={submittingRating} style={{ width: '100%', padding: '12px', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #f59e0b, #d97706)', color: 'white', fontSize: 14, fontWeight: 800, cursor: submittingRating ? 'not-allowed' : 'pointer', opacity: submittingRating ? 0.6 : 1 }}>
+                  {submittingRating ? '⏳ Submitting...' : `Submit ${myRating}★ Rating`}
+                </button>
+              </Section>
+            );
+          })()}
+          {ratingDone && (
+            <div style={{ marginBottom: 16, padding: '12px 14px', borderRadius: 14, background: '#fefce8', border: '1px solid #fde68a', color: '#854d0e', fontSize: 13, fontWeight: 700 }}>
+              ⭐ Thanks! Your rating was submitted.
             </div>
           )}
 
