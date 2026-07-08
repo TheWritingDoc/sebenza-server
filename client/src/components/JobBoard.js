@@ -3054,6 +3054,13 @@ function JobBoard({ user, onViewPortfolio }) {
     return { isPoster, steps, currentStep };
   }, [viewingJob, userId]);
 
+  // Focus mode for locked-in jobs: the detail page shows only the essentials
+  // (map + action buttons + a slim summary). Full job information lives in
+  // Work History / the printable record.
+  const activeJobFocus = !!viewingJob
+    && ['accepted', 'in_progress', 'pending_review', 'pending_payment'].includes(viewingJob.status)
+    && (currentWorkflowState.isPoster || viewingJob.myApplication?.status === 'accepted');
+
   const handleWorkflowStepClick = (stepNum) => {
     if (!viewingJob) return;
     const currentStep = currentWorkflowState.currentStep;
@@ -3399,6 +3406,25 @@ function JobBoard({ user, onViewPortfolio }) {
             padding: isMobile ? '12px 14px 100px' : '20px 24px 100px'
           }}>
             <div style={{ maxWidth: 680, margin: '0 auto' }}>
+              {/* Slim summary for locked-in jobs: what, for how much, when. */}
+              {activeJobFocus && (() => {
+                const app = viewingJob.myApplication
+                  || viewingJob.applications?.find(a => a.status === 'accepted' || String(a._id || a.id) === String(viewingJob.acceptedApplicationId));
+                const agreed = app?.approvedAmount || app?.proposedAmount || viewingJob.budget;
+                const when = viewingJob.proposedTime || viewingJob.scheduledDate;
+                return (
+                  <div style={{ marginBottom: 14, background: 'white', border: '1px solid #e2e8f0', borderRadius: 16, padding: '12px 14px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
+                    <span style={{ fontSize: 22 }}>{categoryEmojis[viewingJob.category] || '✨'}</span>
+                    <span style={{ background: '#eef2ff', color: '#4338ca', fontSize: 16, fontWeight: 900, padding: '5px 12px', borderRadius: 12 }}>R{agreed}</span>
+                    <span style={{ background: viewingJob.paymentMethod === 'escrow' ? '#eef2ff' : '#f0fdf4', color: viewingJob.paymentMethod === 'escrow' ? '#4338ca' : '#166534', fontSize: 12, fontWeight: 700, padding: '5px 10px', borderRadius: 999 }}>
+                      {viewingJob.paymentMethod === 'escrow' ? '🔒 Escrow' : '💵 Cash'}
+                    </span>
+                    {when && <span style={{ fontSize: 12, fontWeight: 700, color: '#475569' }}>📅 {new Date(when).toLocaleString()}</span>}
+                  </div>
+                );
+              })()}
+              {!activeJobFocus && (
+              <>
               {/* Hero summary */}
               <div style={{ marginBottom: 14, background: 'white', border: '1px solid #e2e8f0', borderRadius: 18, padding: isMobile ? '14px 14px' : '16px 18px', boxShadow: '0 8px 24px rgba(15,23,42,0.06)' }}>
                 <h3 style={{ margin: '0 0 6px', fontSize: 'clamp(22px, 5vw, 28px)', lineHeight: 1.2, fontWeight: 850, color: '#0f172a' }}>{viewingJob.title}</h3>
@@ -3703,12 +3729,14 @@ function JobBoard({ user, onViewPortfolio }) {
               ) : null;
             })()}
             {/* Issue reports are viewed in the Work Hub issues tab and the printable work record — not repeated here. */}
+              </>
+              )}
             {/* Location & Navigation (accepted / in_progress) */}
             {['accepted', 'in_progress', 'pending_review'].includes(viewingJob.status) && viewingJob.location && (currentWorkflowState.isPoster || viewingJob.myApplication?.status === 'accepted') && (
               <div ref={locationStartRef} style={{ marginBottom: 16, borderRadius: 16, overflow: 'hidden', border: '1px solid #e2e8f0' }}>
                 <div style={{ fontSize: 12, fontWeight: 800, color: '#1e293b', padding: '10px 12px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <span>📍 Job Location</span>
-                  {viewingJob.myApplication?.status === 'accepted' && (
+                  {viewingJob.myApplication?.status === 'accepted' && viewingJob.status !== 'accepted' && (
                     <button onClick={() => openNavigation(viewingJob.location.lat, viewingJob.location.lng)} style={{
                       padding: '5px 10px', borderRadius: 10, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
                       background: '#dbeafe', color: '#1d4ed8'
