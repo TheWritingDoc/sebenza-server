@@ -1964,6 +1964,16 @@ function JobBoard({ user, onViewPortfolio }) {
                   }}>
                     <span style={{ fontSize: 18 }}>📱</span> Open QR Handshake
                   </button>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button onClick={(e) => { e.stopPropagation(); openNavigation(job.location?.lat, job.location?.lng); }} style={{
+                      flex: 1, padding: '12px', borderRadius: 14, border: 'none', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                      background: '#dbeafe', color: '#1d4ed8', minHeight: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+                    }}>🧭 Navigate</button>
+                    <button onClick={(e) => { e.stopPropagation(); handlePing(job._id); }} disabled={pingingJob === job._id} style={{
+                      flex: 1, padding: '12px', borderRadius: 14, border: 'none', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                      background: '#fef3c7', color: '#92400e', minHeight: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+                    }}>{pingingJob === job._id ? '⏳' : '🔔'} Doorbell</button>
+                  </div>
                   {acceptedApp && (acceptedApp.pingCount > 0 || acceptedApp.autoPingSent) && (
                     <div style={{
                       marginTop: 8, padding: '10px 12px', borderRadius: 12,
@@ -2425,6 +2435,12 @@ function JobBoard({ user, onViewPortfolio }) {
                       background: '#dbeafe', color: '#1d4ed8', whiteSpace: 'nowrap', minHeight: 52, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
                     }}>
                       <span style={{ fontSize: 16 }}>🧭</span> Navigate
+                    </button>
+                    <button onClick={(e) => { e.stopPropagation(); handlePing(job._id); }} disabled={pingingJob === job._id} style={{
+                      padding: '14px', borderRadius: 16, border: 'none', fontSize: 14, fontWeight: 700, cursor: 'pointer',
+                      background: '#fef3c7', color: '#92400e', whiteSpace: 'nowrap', minHeight: 52, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+                    }}>
+                      <span style={{ fontSize: 16 }}>{pingingJob === job._id ? '⏳' : '🔔'}</span> Doorbell
                     </button>
                   </div>
                   {/* Doorbell for helper */}
@@ -3726,6 +3742,21 @@ function JobBoard({ user, onViewPortfolio }) {
                   {viewingJob.status === 'accepted' && (currentWorkflowState.isPoster || viewingJob.myApplication?.status === 'accepted') && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                       {/* QR Handshake — DEFAULT method */}
+                      {/* Next-step action trio: get there, announce arrival, start */}
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button onClick={() => openNavigation(viewingJob.location?.lat, viewingJob.location?.lng)} style={{
+                          flex: 1, padding: '12px 6px', borderRadius: 12, border: 'none', fontSize: 12, fontWeight: 800, cursor: 'pointer',
+                          background: '#dbeafe', color: '#1d4ed8', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, minHeight: 56
+                        }}><span style={{ fontSize: 18 }}>🧭</span>Navigate</button>
+                        <button onClick={() => handlePing(viewingJob._id)} disabled={pingingJob === viewingJob._id} style={{
+                          flex: 1, padding: '12px 6px', borderRadius: 12, border: 'none', fontSize: 12, fontWeight: 800, cursor: 'pointer',
+                          background: '#fef3c7', color: '#92400e', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, minHeight: 56
+                        }}><span style={{ fontSize: 18 }}>{pingingJob === viewingJob._id ? '⏳' : '🔔'}</span>Doorbell</button>
+                        <button onClick={() => setQrHandshakeJob(viewingJob)} style={{
+                          flex: 1, padding: '12px 6px', borderRadius: 12, border: 'none', fontSize: 12, fontWeight: 800, cursor: 'pointer',
+                          background: 'linear-gradient(135deg, #22c55e, #16a34a)', color: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, minHeight: 56
+                        }}><span style={{ fontSize: 18 }}>📱</span>QR Code</button>
+                      </div>
                       <div style={{ padding: 12, borderRadius: 12, background: '#dcfce7', border: '1px solid #bbf7d0' }}>
                         <div style={{ fontSize: 12, fontWeight: 800, color: '#166534', marginBottom: 4 }}>📱 QR Handshake — Default</div>
                         <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>

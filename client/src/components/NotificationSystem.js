@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Bell, X, Trash2, CheckCircle2 } from './Icons';
+import useHardwareBackClose from '../shared/useHardwareBackClose';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -33,8 +34,9 @@ const TYPE_CONFIG = {
   issue_reported:       { color: '#ef4444', icon: '⚠️', bg: '#fef2f2', route: '/jobs', actionLabel: 'View Issue', actionType: 'primary' },
 };
 
-// Critical notifications that require action and should NOT auto-dismiss
-const CRITICAL_TYPES = ['application_received', 'negotiation_updated', 'application_approved', 'offer_accepted', 'job_started', 'completion_requested', 'job_pending_payment', 'issue_reported'];
+// Critical notifications that require action and should NOT auto-dismiss.
+// These trigger the full-screen action popup + sound + vibration.
+const CRITICAL_TYPES = ['application_received', 'negotiation_updated', 'application_approved', 'offer_accepted', 'offer_rejected', 'schedule_confirmed', 'job_started', 'completion_requested', 'job_pending_payment', 'issue_reported'];
 
 const DEFAULT_CONFIG = { color: '#64748b', icon: '📢', bg: '#f8fafc', route: '/dashboard', actionLabel: 'View', actionType: 'secondary' };
 
@@ -170,6 +172,16 @@ export default function NotificationSystem({ user, socket, panelOpen: controlled
   const panelRef = useRef(null);
   const timeoutsRef = useRef([]);
   const swipeRef = useRef({});
+  // Full-screen "action required" popup for critical notifications — the user
+  // must tap Proceed or Close, so nothing important slips by silently.
+  const [actionPopup, setActionPopup] = useState(null);
+  // Ids already announced (toast/sound/popup) — lets the 15s polling fallback
+  // announce notifications the socket missed instead of adding them silently.
+  const seenIdsRef = useRef(null); // null = first fetch not done yet
+  const announceRef = useRef(null);
+
+  // Phone back button dismisses the popup instead of exiting/navigating
+  useHardwareBackClose(!!actionPopup, () => setActionPopup(null));
 
   useEffect(() => {
     const onResize = () => setIsMobile(window.innerWidth < 768);
@@ -196,6 +208,18 @@ export default function NotificationSystem({ user, socket, panelOpen: controlled
         const data = await res.json();
         const notifs = Array.isArray(data) ? data : (data.notifications || []);
         setNotifications(notifs);
+
+        // Announce critical notifications the socket missed (silent-arrival fix).
+        if (seenIdsRef.current === null) {
+          // First fetch after app open: don't re-alert the whole backlog.
+          seenIdsRef.current = new Set(notifs.map(n => n._id));
+        } else {
+          const fresh = notifs.filter(n => n._id && !seenIdsRef.current.has(n._id));
+          fresh.forEach(n => seenIdsRef.current.add(n._id));
+          fresh
+            .filter(n => !n.read && CRITICAL_TYPES.includes(n.type))
+            .forEach(n => { if (announceRef.current) announceRef.current(n); });
+        }
       }
     } catch (err) {
       console.error('Failed to fetch notifications', err);
@@ -228,11 +252,16 @@ export default function NotificationSystem({ user, socket, panelOpen: controlled
     const handler = (notif) => {
       const isCritical = CRITICAL_TYPES.includes(notif.type);
 
+      if (notif._id && seenIdsRef.current) seenIdsRef.current.add(notif._id);
+
       setNotifications(prev => {
         const exists = prev.find(n => n._id === notif._id);
         if (exists) return prev;
         return [notif, ...prev];
       });
+
+      // Critical: large blocking popup the user must tap (Proceed / Close)
+      if (isCritical) setActionPopup(notif);
 
       const toastId = notif._id || Date.now() + Math.random();
       setToasts(prev => [...prev, { ...notif, toastId, isCritical }]);
@@ -305,6 +334,8 @@ export default function NotificationSystem({ user, socket, panelOpen: controlled
       }
     };
     socket.on('notification', handler);
+    // Polling fallback reuses the exact same announcement path
+    announceRef.current = handler;
 
     // Listen for chat notifications (when someone messages you while you're not in the chat)
     const chatHandler = (data) => {
@@ -372,6 +403,7 @@ export default function NotificationSystem({ user, socket, panelOpen: controlled
     socket.on('new_service_nearby', nearbyServiceHandler);
 
     return () => {
+      announceRef.current = null;
       socket.off('notification', handler);
       socket.off('chat_notification', chatHandler);
       socket.off('new_job_nearby', nearbyJobHandler);
@@ -643,6 +675,54 @@ export default function NotificationSystem({ user, socket, panelOpen: controlled
           )}
         </button>
       )}
+
+      {/* Full-screen ACTION REQUIRED popup — must be tapped away */}
+      {actionPopup && (() => {
+        const config = TYPE_CONFIG[actionPopup.type] || DEFAULT_CONFIG;
+        const proceed = () => {
+          navigate(resolveNotificationRoute(actionPopup, config.route));
+          if (!actionPopup.read && actionPopup._id) markAsRead(actionPopup._id);
+          setActionPopup(null);
+        };
+        return (
+          <div style={{
+            position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.72)', backdropFilter: 'blur(3px)',
+            zIndex: 10075, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20
+          }}>
+            <div style={{
+              background: 'white', borderRadius: 24, padding: '26px 22px', width: '100%', maxWidth: 400,
+              border: `3px solid ${config.color}`, boxShadow: `0 24px 70px ${config.color}55`,
+              textAlign: 'center', animation: 'toastIn 0.35s cubic-bezier(0.16, 1, 0.3, 1)'
+            }}>
+              <div style={{ width: 74, height: 74, borderRadius: 22, background: config.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 40, margin: '0 auto 12px' }}>
+                {config.icon}
+              </div>
+              <div style={{ fontSize: 11, fontWeight: 800, color: config.color, textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>
+                🔴 Action Required
+              </div>
+              <div style={{ fontSize: 19, fontWeight: 900, color: '#0f172a', marginBottom: 8 }}>
+                {actionPopup.title || 'New Update'}
+              </div>
+              <div style={{ fontSize: 14, color: '#475569', lineHeight: 1.5, marginBottom: 20 }}>
+                {actionPopup.message}
+              </div>
+              <button onClick={proceed} style={{
+                width: '100%', minHeight: 52, borderRadius: 16, border: 'none', cursor: 'pointer',
+                fontSize: 15, fontWeight: 800, color: 'white', background: config.color,
+                boxShadow: `0 6px 20px ${config.color}55`, marginBottom: 10
+              }}>
+                {config.actionLabel} →
+              </button>
+              <button onClick={() => { if (!actionPopup.read && actionPopup._id) markAsRead(actionPopup._id); setActionPopup(null); }} style={{
+                width: '100%', minHeight: 46, borderRadius: 14, border: 'none', cursor: 'pointer',
+                fontSize: 14, fontWeight: 700, color: '#64748b', background: '#f1f5f9'
+              }}>
+                Close
+              </button>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Toast Stack */}
       <div style={toastContainerStyle}>
