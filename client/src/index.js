@@ -108,6 +108,39 @@ window.addEventListener('error', (event) => {
     }
   };
 
+  // ── Exit guard (native app only) ──
+  // The Android wrapper's default back behavior is: WebView canGoBack ?
+  // goBack : EXIT APP. We keep one sentinel entry at the bottom of history so
+  // back never exits directly. When the sentinel is consumed on the home
+  // screen we show "press back again to exit" and leave history empty for
+  // 2 seconds — a second press within that window lets the native exit
+  // happen; otherwise the sentinel is re-armed.
+  const isNativeApp = !!(window.Capacitor && (
+    typeof window.Capacitor.isNativePlatform === 'function'
+      ? window.Capacitor.isNativePlatform()
+      : window.Capacitor.isNative
+  )) || /; wv\)/.test(navigator.userAgent); // Android WebView UA (wrapper without bridge)
+  let guardArmed = false;
+
+  const armExitGuard = () => {
+    if (guardArmed) return;
+    guardArmed = true;
+    window.history.pushState({ __sebenzaExitGuard: true }, '');
+  };
+
+  const showExitToast = () => {
+    const el = document.createElement('div');
+    el.textContent = 'Press back again to exit Sebenza';
+    el.style.cssText = 'position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:rgba(15,23,42,0.92);color:white;padding:10px 18px;border-radius:999px;font-size:13px;font-weight:600;z-index:100001;font-family:inherit;pointer-events:none;';
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1900);
+  };
+
+  if (isNativeApp) {
+    // Arm once the app has booted (after the router settles on its first route).
+    setTimeout(armExitGuard, 800);
+  }
+
   window.addEventListener('popstate', (e) => {
     if (suppressPops > 0) {
       suppressPops -= 1;
@@ -123,6 +156,35 @@ window.addEventListener('error', (event) => {
       // overlay's effect cleanup will call popBackHandler, which no-ops because
       // the fn is already off the stack.
       e.stopImmediatePropagation?.();
+      return;
+    }
+
+    if (!isNativeApp || !guardArmed) return;
+
+    if (window.history.state && window.history.state.__sebenzaExitGuard) {
+      // Popped a real page entry and landed ON the guard — normal in-app back,
+      // let the router handle it.
+      return;
+    }
+
+    // The guard itself was consumed — bottom of the app's history.
+    guardArmed = false;
+    const path = window.location.pathname;
+    const onHome = path === '/dashboard' || path === '/' || path === '/login';
+    if (onHome) {
+      // Double-tap to exit: for 2s history stays empty so the next native back
+      // press exits the app; after that the guard re-arms.
+      showExitToast();
+      e.stopImmediatePropagation?.();
+      setTimeout(armExitGuard, 2000);
+    } else {
+      // Back pressed on a section reached without history (e.g. deep link):
+      // go to the home screen instead of exiting.
+      e.stopImmediatePropagation?.();
+      window.history.replaceState(null, '', '/dashboard');
+      armExitGuard();
+      // Let the router re-render the new URL.
+      window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
     }
   });
 })();
