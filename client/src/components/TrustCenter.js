@@ -38,9 +38,10 @@ export function communityStarsFromStats(stats = {}, flagsList = []) {
   const reviews = stats.totalReceivedReviews || 0;
   const unresolved = Array.isArray(flagsList) ? flagsList.filter(f => f && !f.resolved) : [];
   const flags = {
-    frequentComplainer: (stats.complainerScore || 0) >= 60,
+    frequentComplainer: (stats.complainerScore || 0) >= 60 || unresolved.some(f => f.type === 'high_complainer'),
     lowReliability: (stats.reliabilityScore ?? 100) < 50,
     flagged: unresolved.some(f => ['suspicious_activity', 'multiple_disputes'].includes(f.type)),
+    redeemed: Array.isArray(flagsList) && flagsList.some(f => f && f.resolved && f.resolution),
   };
   if (reviews === 0) return { stars: null, reviews: 0, flags };
   let s = Number(stats.receivedRatingsAvg) || 0;
@@ -65,6 +66,7 @@ export function BehaviourBadges({ flags, size = 10 }) {
       {flags.flagged && badge('#fee2e2', '#991b1b', 'FLAGGED')}
       {flags.frequentComplainer && badge('#fef3c7', '#92400e', 'Complains often')}
       {flags.lowReliability && badge('#fef3c7', '#92400e', 'Low reliability')}
+      {flags.redeemed && !flags.flagged && !flags.frequentComplainer && badge('#dcfce7', '#166534', '✅ Redeemed')}
     </span>
   );
 }

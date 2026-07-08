@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { getImageUrl, PLACEHOLDER_IMG, categoryEmojis } from '../shared/constants';
 import { scrollToRef } from '../shared/workflowFocus';
+import printJobRecord from '../shared/printJobRecord';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -107,6 +108,11 @@ export default function JobCompletionSummary({ job, userId, onClose, onPhotoClic
           <div style={{ fontSize: isMobile ? 15 : 17, fontWeight: 800, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{job.title}</div>
           <div style={{ fontSize: 12, color: '#64748b', marginTop: 2 }}>Completion Summary</div>
         </div>
+        <button onClick={() => printJobRecord(job)} style={{
+          padding: '9px 14px', borderRadius: 12, border: '1px solid #cbd5e1', background: 'white',
+          color: '#334155', fontSize: 12, fontWeight: 800, cursor: 'pointer', flexShrink: 0,
+          display: 'flex', alignItems: 'center', gap: 6
+        }}>🖨 Print Record</button>
       </div>
 
       {/* Scrollable */}

@@ -15,6 +15,7 @@ import { scrollToRef, blurActiveInput, mobileFieldFocusScroll } from '../shared/
 import { Briefcase, ClipboardList, Handshake, Plus, Eye, Users, Banknote, Clock, MessageCircle, ArrowRight } from './Icons';
 import useBodyScrollLock from '../shared/useBodyScrollLock';
 import useHardwareBackClose from '../shared/useHardwareBackClose';
+import printJobRecord from '../shared/printJobRecord';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -4483,6 +4484,10 @@ function JobBoard({ user, onViewPortfolio }) {
                       </div>
                     );
                   })()}
+                  {/* Court-ready record: available at any stage for dispute evidence */}
+                  <button onClick={() => printJobRecord(viewingJob)} style={{ width: '100%', marginBottom: 8, padding: '10px 12px', borderRadius: 12, border: '1px solid #cbd5e1', background: 'white', color: '#334155', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}>
+                    🖨 Print Work Record (for disputes / Small Claims Court)
+                  </button>
                   <div style={{ fontSize: 12, color: '#334155', marginBottom: 8 }}>When job is done, submit completion and proceed to payment QR confirmation.</div>
                   <button onClick={() => handleCompleteJob(viewingJob)} disabled={!!viewingJob.completionRequest?.status || ['pending_review', 'pending_payment', 'completed'].includes(viewingJob.status)} style={{ width: '100%', padding: '10px 12px', borderRadius: 12, border: 'none', background: '#4f46e5', color: 'white', fontSize: 12, fontWeight: 800, cursor: (viewingJob.completionRequest?.status || ['pending_review', 'pending_payment', 'completed'].includes(viewingJob.status)) ? 'not-allowed' : 'pointer', opacity: (viewingJob.completionRequest?.status || ['pending_review', 'pending_payment', 'completed'].includes(viewingJob.status)) ? 0.6 : 1 }}>Mark done & continue</button>
                   {viewingJob.status === 'pending_payment' && (

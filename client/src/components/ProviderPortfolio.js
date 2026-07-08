@@ -106,6 +106,16 @@ function ProviderPortfolio({ providerId, providerName, onClose }) {
                   {trust.totalStars != null && (
                     <div style={{ fontSize: 12, fontWeight: 800, color: '#4f46e5', marginTop: 6 }}>Total trust: {trust.totalStars} / 10</div>
                   )}
+                  {(trust.community?.flags?.flagged || trust.community?.flags?.frequentComplainer) && (
+                    <div style={{ marginTop: 8, fontSize: 11, color: '#9a3412', background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 10, padding: '8px 10px', lineHeight: 1.4 }}>
+                      ⚖️ Flags come from recorded platform activity (issue reports, cancellations). They clear automatically — "redeemed" — when the user completes jobs with 4★+ ratings and no new issues.
+                    </div>
+                  )}
+                  {trust.community?.flags?.redeemed && !trust.community?.flags?.flagged && (
+                    <div style={{ marginTop: 8, fontSize: 11, color: '#166534', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 10, padding: '8px 10px', lineHeight: 1.4 }}>
+                      ✅ Past flags were cleared through good completed work.
+                    </div>
+                  )}
                 </div>
               )}
 

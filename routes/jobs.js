@@ -172,7 +172,10 @@ async function applyRatingToUser(userId, rating) {
     const n = (cs.totalReceivedReviews || 0) + 1;
     cs.receivedRatingsAvg = Math.round(((((cs.receivedRatingsAvg || 0) * (n - 1)) + rating) / n) * 100) / 100;
     cs.totalReceivedReviews = n;
+    // Redemption: a 4★+ rating from a real job wears down past issue reports.
+    if (rating >= 4 && cs.jobIssuesAgainst > 0) cs.jobIssuesAgainst = cs.jobIssuesAgainst - 1;
     await prisma.user.update({ where: { id: userId }, data: { communityStats: cs } });
+    await recomputeJobBehaviourFlags(userId).catch(() => {});
   } catch (e) {
     console.error('applyRatingToUser failed:', e.message);
   }
@@ -186,7 +189,11 @@ async function bumpCompletionCounters(providerId, posterId) {
       if (!u) continue;
       const cs = { ...(u.communityStats || {}) };
       cs[key] = (cs[key] || 0) + 1;
+      // Redemption: every cleanly completed job wears down "complains often" —
+      // filed complaints fade as the user proves they can work with others.
+      if (cs.jobComplaintsFiled > 0) cs.jobComplaintsFiled = cs.jobComplaintsFiled - 1;
       await prisma.user.update({ where: { id }, data: { communityStats: cs } });
+      await recomputeJobBehaviourFlags(id).catch(() => {});
     }
     // First completed job is an identity trust item for the provider.
     if (providerId) {
@@ -195,6 +202,50 @@ async function bumpCompletionCounters(providerId, posterId) {
     }
   } catch (e) {
     console.error('bumpCompletionCounters failed:', e.message);
+  }
+}
+
+// ── Behaviour flags from the JOB flow ─────────────────────────────────
+// Issue reports raise counters; good completed work lowers them again
+// (redemption). Flags describe recorded facts, never labels: what shows on a
+// profile is "N issue reports across M jobs", derived here.
+//   jobIssuesAgainst    — issues other parties filed on this user's jobs
+//   jobComplaintsFiled  — issues this user filed against others
+async function recomputeJobBehaviourFlags(userId) {
+  const u = await prisma.user.findUnique({ where: { id: userId }, select: { communityStats: true, flags: true } });
+  if (!u) return;
+  const cs = u.communityStats || {};
+  const flags = Array.isArray(u.flags) ? u.flags : [];
+  const totalJobs = Math.max(1, (cs.jobsCompleted || 0) + (cs.jobsRequested || 0));
+  const issuesAgainst = cs.jobIssuesAgainst || 0;
+  const complaintsFiled = cs.jobComplaintsFiled || 0;
+
+  const shouldDisputeFlag = issuesAgainst >= 2 && issuesAgainst / totalJobs >= 0.25;
+  const shouldComplainerFlag = complaintsFiled >= 3 && complaintsFiled / totalJobs >= 0.5;
+
+  let changed = false;
+  const next = flags.map(f => {
+    // Redemption: auto-resolve when the driving counter has recovered.
+    if (!f.resolved && f.type === 'multiple_disputes' && f.source === 'jobs' && !shouldDisputeFlag) {
+      changed = true;
+      return { ...f, resolved: true, resolvedAt: new Date(), resolution: 'Redeemed — issue rate recovered through completed jobs' };
+    }
+    if (!f.resolved && f.type === 'high_complainer' && f.source === 'jobs' && !shouldComplainerFlag) {
+      changed = true;
+      return { ...f, resolved: true, resolvedAt: new Date(), resolution: 'Redeemed — completed jobs without further complaints' };
+    }
+    return f;
+  });
+  if (shouldDisputeFlag && !next.some(f => f.type === 'multiple_disputes' && !f.resolved)) {
+    next.push({ type: 'multiple_disputes', source: 'jobs', reason: `${issuesAgainst} issue report${issuesAgainst === 1 ? '' : 's'} across ${totalJobs} job${totalJobs === 1 ? '' : 's'}`, createdAt: new Date() });
+    changed = true;
+  }
+  if (shouldComplainerFlag && !next.some(f => f.type === 'high_complainer' && !f.resolved)) {
+    next.push({ type: 'high_complainer', source: 'jobs', reason: `Filed ${complaintsFiled} issue report${complaintsFiled === 1 ? '' : 's'} across ${totalJobs} job${totalJobs === 1 ? '' : 's'}`, createdAt: new Date() });
+    changed = true;
+  }
+  if (changed) {
+    await prisma.user.update({ where: { id: userId }, data: { flags: next } });
   }
 }
 
@@ -1112,6 +1163,20 @@ router.post('/:id/report-issue', auth, upload.array('photos', 10), async (req, r
         jobId: job.id
       });
     }
+
+    // Behaviour tracking: raise the reported party's issue counter and the
+    // reporter's complaint counter, then re-derive visible flags.
+    try {
+      for (const [uid, key] of [[String(otherPartyId || ''), 'jobIssuesAgainst'], [String(req.userId), 'jobComplaintsFiled']]) {
+        if (!uid) continue;
+        const u = await prisma.user.findUnique({ where: { id: uid }, select: { communityStats: true } });
+        if (!u) continue;
+        const cs = { ...(u.communityStats || {}) };
+        cs[key] = (cs[key] || 0) + 1;
+        await prisma.user.update({ where: { id: uid }, data: { communityStats: cs } });
+        await recomputeJobBehaviourFlags(uid);
+      }
+    } catch (e) { console.error('Issue behaviour tracking failed:', e.message); }
   } catch (err) {
     console.error('Report issue error:', err);
     res.status(500).json({ error: 'Server error' });
