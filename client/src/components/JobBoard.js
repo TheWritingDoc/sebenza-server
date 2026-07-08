@@ -3702,29 +3702,7 @@ function JobBoard({ user, onViewPortfolio }) {
                 </div>
               ) : null;
             })()}
-            {/* Issue Reports */}
-            {!['accepted', 'in_progress', 'pending_review', 'pending_payment', 'completed'].includes(viewingJob.status) && viewingJob.issueReports?.length > 0 && (
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#991b1b', marginBottom: 8 }}>🚨 Issue Reports</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {viewingJob.issueReports.map((report, ri) => (
-                    <div key={ri} style={{ background: '#fef2f2', borderRadius: 14, padding: 12, border: '1px solid #fca5a5' }}>
-                      {report.note && <div style={{ fontSize: 13, color: '#7f1d1d', marginBottom: 8, lineHeight: 1.5 }}>{report.note}</div>}
-                      {report.photos?.length > 0 && (
-                        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
-                          {report.photos.map((p, i) => (
-                            <img key={i} src={getImageUrl(p)} alt="" onClick={() => openGallery(report.photos, i)} onError={(e) => { e.target.onerror = null; e.target.src = PLACEHOLDER_IMG; }} style={{ width: 64, height: 64, borderRadius: 10, objectFit: 'cover', cursor: 'pointer', border: '1px solid #fca5a5' }} />
-                          ))}
-                        </div>
-                      )}
-                      <div style={{ fontSize: 11, color: '#b91c1c', fontWeight: 600 }}>
-                        Reported {new Date(report.createdAt || report.reportedAt).toLocaleString()}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
+            {/* Issue reports are viewed in the Work Hub issues tab and the printable work record — not repeated here. */}
             {/* Location & Navigation (accepted / in_progress) */}
             {['accepted', 'in_progress', 'pending_review'].includes(viewingJob.status) && viewingJob.location && (currentWorkflowState.isPoster || viewingJob.myApplication?.status === 'accepted') && (
               <div ref={locationStartRef} style={{ marginBottom: 16, borderRadius: 16, overflow: 'hidden', border: '1px solid #e2e8f0' }}>
@@ -3920,26 +3898,19 @@ function JobBoard({ user, onViewPortfolio }) {
                     </div>
                   )}
 
+                  {/* Navigation lives in the Job Location card below — one button per action. */}
                   <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 8 }}>
                     <button
                       type="button"
                       onClick={() => { setReportingIssueJob(viewingJob._id); setIssueNote(''); setIssuePhotos([]); }}
                       style={{ flex: 1, padding: '10px 12px', borderRadius: 12, border: '1px solid #fca5a5', background: '#fef2f2', color: '#991b1b', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
                     >📝 Report Issue</button>
-                  </div>
-
-                  <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 8 }}>
                     <button
                       type="button"
                       onClick={() => handleCompleteJob(viewingJob)}
                       disabled={!!viewingJob.completionRequest?.status}
                       style={{ flex: 1, padding: '11px 12px', borderRadius: 12, border: 'none', background: 'linear-gradient(135deg, #16a34a, #15803d)', color: 'white', fontSize: 12, fontWeight: 800, cursor: viewingJob.completionRequest?.status ? 'not-allowed' : 'pointer', opacity: viewingJob.completionRequest?.status ? 0.6 : 1 }}
                     >✅ Mark Work Done + Upload Proof</button>
-                    <button
-                      type="button"
-                      onClick={() => openNavigation(viewingJob.location?.lat, viewingJob.location?.lng)}
-                      style={{ flex: 1, padding: '11px 12px', borderRadius: 12, border: '1px solid #bfdbfe', background: '#eff6ff', color: '#1d4ed8', fontSize: 12, fontWeight: 800, cursor: 'pointer' }}
-                    >🧭 Open Navigation</button>
                   </div>
                 </div>
               </div>
@@ -4136,58 +4107,7 @@ function JobBoard({ user, onViewPortfolio }) {
                       </div>
                     </div>
                   )}
-                  {/* Navigate + Doorbell for accepted only (outside Work Hub) */}
-                  {viewingJob.status === 'accepted' && viewingJob.myApplication?.status === 'accepted' && (
-                    <>
-                      <button onClick={() => openNavigation(viewingJob.location?.lat, viewingJob.location?.lng)} style={{
-                        width: '100%', padding: '12px', borderRadius: 14, border: 'none', fontSize: 13, fontWeight: 700, cursor: 'pointer',
-                        background: '#dbeafe', color: '#1d4ed8', minHeight: 44
-                      }}>🧭 Navigate to Job</button>
-
-                      {(viewingJob.posterId?._id?.toString?.() !== userId && viewingJob.posterId?.toString?.() !== userId) && (
-                        (viewingJob.myApplication?.pingCount || 0) >= 3 ? (
-                          <div style={{
-                            padding: '10px 12px', borderRadius: 12, background: '#fee2e2', color: '#991b1b',
-                            fontSize: 12, fontWeight: 700, textAlign: 'center'
-                          }}>
-                            🚫 Max doorbell rings reached (3/3)
-                          </div>
-                        ) : (
-                          <button
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              setPingingJob(viewingJob._id);
-                              try {
-                                const res = await axios.post(`${API_URL}/api/jobs/${viewingJob._id}/ping`, { type: 'manual' }, {
-                                  headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-                                });
-                                if (res.data.impatient) {
-                                  showMsg('Doorbell rung! Flagged as impatient (3 rings in under 5 min)');
-                                } else {
-                                  showMsg(`Doorbell rung! (${res.data.pingCount}/3)`);
-                                }
-                                silentRefresh(viewingJob._id);
-                              } catch (err) {
-                                const msg = err.response?.data?.error || 'Failed to ring doorbell';
-                                showMsg(msg);
-                              }
-                              setPingingJob(null);
-                            }}
-                            disabled={pingingJob === viewingJob._id}
-                            style={{
-                              width: '100%', padding: '11px', borderRadius: 14, border: 'none',
-                              fontSize: 13, fontWeight: 700, cursor: 'pointer',
-                              background: (viewingJob.myApplication?.pingCount || 0) > 0 ? '#fef3c7' : 'linear-gradient(135deg, #f59e0b, #d97706)',
-                              color: (viewingJob.myApplication?.pingCount || 0) > 0 ? '#92400e' : 'white',
-                              minHeight: 44
-                            }}
-                          >
-                            {pingingJob === viewingJob._id ? '⏳ Ringing...' : `🔔 Ring Doorbell (${viewingJob.myApplication?.pingCount || 0}/3)`}
-                          </button>
-                        )
-                      )}
-                    </>
-                  )}
+                  {/* Navigate/Doorbell/QR for accepted jobs live in the Job Location card above — no duplicates here. */}
                 </>
               )}
 
