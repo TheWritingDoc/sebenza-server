@@ -16,6 +16,7 @@ import { Briefcase, ClipboardList, Handshake, Plus, Eye, Users, Banknote, Clock,
 import useBodyScrollLock from '../shared/useBodyScrollLock';
 import useHardwareBackClose from '../shared/useHardwareBackClose';
 import printJobRecord from '../shared/printJobRecord';
+import JobMap from '../shared/JobMap';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -431,8 +432,9 @@ function JobBoard({ user, onViewPortfolio }) {
         const job = res.data;
         if (!job) return;
         if (mode === 'start' && job.status === 'accepted') {
+          // Just open the job so the user sees the Navigate/Doorbell/QR
+          // buttons — they choose when to open the QR themselves.
           setViewingJob(job);
-          setQrHandshakeJob(job);
         } else if (mode === 'payment' && job.status === 'pending_payment') {
           setViewingJob(job);
           openPaymentQR(job);
@@ -1679,15 +1681,14 @@ function JobBoard({ user, onViewPortfolio }) {
     setConfirmingApproval(jobId);
     try {
       await axios.post(`${API_URL}/api/jobs/${jobId}/applications/${appId}/confirm`, {}, { headers: { Authorization: `Bearer ${token}` } });
-      showMsg('Job confirmed! Next: scan the QR code together to start.');
+      showMsg('Job confirmed! Use Navigate, Doorbell or QR Code when you meet.');
       await Promise.all([fetchMyJobs(), fetchMyApplications(), fetchJobs()]);
-      // QR handshake is the next step — open it right away on this device
-      // (the other device auto-opens via the schedule_confirmed notification).
+      // Show the clean action panel (Navigate / Doorbell / QR) — the QR is
+      // opened manually by the user, never automatically.
       try {
         const fresh = await axios.get(`${API_URL}/api/jobs/${jobId}`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
         if (fresh.data?.status === 'accepted') {
           setViewingJob(fresh.data);
-          setQrHandshakeJob(fresh.data);
         } else if (viewingJob?._id === jobId) {
           setViewingJob(fresh.data || null);
         }
@@ -3661,8 +3662,11 @@ function JobBoard({ user, onViewPortfolio }) {
                 </div>
               </div>
             )}
-            {/* Negotiation Timeline */}
+            {/* Negotiation Timeline — hidden once the job is locked in, to keep
+                the active-job view clean (full history stays in the printable
+                work record). */}
             {(() => {
+              if (['accepted', 'in_progress', 'pending_review', 'pending_payment'].includes(viewingJob.status)) return null;
               const acceptedApp = viewingJob.applications?.find(a => a.status === 'accepted') || viewingJob.applications?.[0];
               return acceptedApp?.negotiationHistory?.length > 0 ? (
                 <div style={{ marginBottom: 16 }}>
@@ -3734,9 +3738,8 @@ function JobBoard({ user, onViewPortfolio }) {
                   )}
                 </div>
                 <div style={{ padding: 12, background: 'white' }}>
-                  <div style={{ fontSize: 12, color: '#64748b', marginBottom: 8 }}>
-                    Lat: <strong style={{ color: '#1e293b' }}>{viewingJob.location.lat?.toFixed(5)}</strong> &nbsp;•&nbsp;
-                    Lng: <strong style={{ color: '#1e293b' }}>{viewingJob.location.lng?.toFixed(5)}</strong>
+                  <div style={{ marginBottom: 10 }}>
+                    <JobMap lat={viewingJob.location.lat} lng={viewingJob.location.lng} />
                   </div>
 
                   {/* Handshake options when accepted */}
@@ -3758,15 +3761,8 @@ function JobBoard({ user, onViewPortfolio }) {
                           background: 'linear-gradient(135deg, #22c55e, #16a34a)', color: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2, minHeight: 56
                         }}><span style={{ fontSize: 18 }}>📱</span>QR Code</button>
                       </div>
-                      <div style={{ padding: 12, borderRadius: 12, background: '#dcfce7', border: '1px solid #bbf7d0' }}>
-                        <div style={{ fontSize: 12, fontWeight: 800, color: '#166534', marginBottom: 4 }}>📱 QR Handshake — Default</div>
-                        <div style={{ fontSize: 11, color: '#64748b', marginBottom: 8 }}>
-                          Scan each other's QR code to confirm you met in person and start the job.
-                        </div>
-                        <button onClick={() => setQrHandshakeJob(viewingJob)} style={{
-                          width: '100%', padding: '10px', borderRadius: 12, border: 'none', fontSize: 13, fontWeight: 700, cursor: 'pointer',
-                          background: 'linear-gradient(135deg, #22c55e, #16a34a)', color: 'white'
-                        }}>📱 Open QR Handshake</button>
+                      <div style={{ fontSize: 11, color: '#64748b', textAlign: 'center' }}>
+                        When you meet in person, tap <strong>QR Code</strong> and scan each other to start the job.
                       </div>
 
                       {/* GPS proximity — provider-controlled fallback */}

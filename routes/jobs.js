@@ -982,6 +982,34 @@ router.post('/:id/applications/:appId/confirm', auth, async (req, res) => {
         : `Your helper confirmed "${flipped.title}" — it's locked in! (Cash: R${finalAmount})`,
       jobId: flipped.id
     });
+
+    // Job is now locked in — close out every other applicant and tell them.
+    try {
+      const losers = await prisma.application.findMany({
+        where: {
+          jobId: flipped.id,
+          id: { not: req.params.appId },
+          status: { notIn: ['rejected', 'withdrawn', 'accepted'] }
+        },
+        select: { id: true, applicantId: true }
+      });
+      if (losers.length > 0) {
+        await prisma.application.updateMany({
+          where: { id: { in: losers.map(l => l.id) } },
+          data: { status: 'rejected' }
+        });
+        for (const uid of [...new Set(losers.map(l => String(l.applicantId)))]) {
+          notify(req, uid, {
+            type: 'application_unsuccessful',
+            title: 'Position Filled',
+            message: `"${flipped.title}" has been given to another helper. Thanks for offering — more jobs are posted every day!`,
+            jobId: flipped.id
+          });
+        }
+      }
+    } catch (loserErr) {
+      console.error('Unsuccessful-applicant notify error:', loserErr.message);
+    }
   } catch (err) {
     console.error('Confirm error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -1294,6 +1322,24 @@ router.post('/:id/stop-job', auth, upload.array('stopPhotos', 10), async (req, r
     }
 
     res.json({ message: refunded > 0 ? `Job stopped. R${refunded} escrow refunded to your balance.` : 'Job stopped', refundedAmount: refunded });
+
+    // Tell the helper the job was cancelled — with the reason — so they are
+    // never left waiting at a job that no longer exists.
+    try {
+      const acceptedApp = job.acceptedApplicationId
+        ? await prisma.application.findUnique({ where: { id: job.acceptedApplicationId }, select: { applicantId: true } })
+        : null;
+      if (acceptedApp) {
+        notify(req, acceptedApp.applicantId, {
+          type: 'job_cancelled',
+          title: 'Job Cancelled ⚠️',
+          message: `"${job.title}" was cancelled by the poster${reason ? ` — reason: ${sanitizeString(reason, 300)}` : ''}. If it was due to unforeseen circumstances, they may repost it — you can offer to help again.`,
+          jobId: job.id
+        });
+      }
+    } catch (notifyErr) {
+      console.error('Stop-job notify error:', notifyErr.message);
+    }
   } catch (err) {
     console.error('Stop job error:', err);
     res.status(500).json({ error: 'Server error' });

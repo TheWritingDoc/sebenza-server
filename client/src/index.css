@@ -214,6 +214,12 @@ button, a, [role="button"], input, select, textarea, label {
   transform: scale(1.05);
 }
 
+/* Hide floating chrome while any modal/overlay is open (set by useBodyScrollLock) */
+body[data-overlay-open] .mobile-fab,
+body[data-overlay-open] .mobile-bottom-nav {
+  display: none !important;
+}
+
 /* Verified badge */
 .verified-badge {
   background: #22c55e;

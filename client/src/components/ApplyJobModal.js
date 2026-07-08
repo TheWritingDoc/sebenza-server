@@ -156,15 +156,15 @@ function ApplyJobModal({ job, onClose, onApplied }) {
         )}
 
         {/* Poster + payment method row */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: '#f8fafc', borderRadius: 16, flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: '#f8fafc', borderRadius: 16, flex: '1 1 240px', minWidth: 0 }}>
             <div style={{
               width: 36, height: 36, borderRadius: '50%',
               background: job.posterId?.avatar ? `url(${getImageUrl(job.posterId.avatar)}) center/cover` : 'linear-gradient(135deg, #6366f1, #4f46e5)',
               display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: 'white', fontWeight: 600, flexShrink: 0
             }}>{!job.posterId?.avatar && job.posterId?.name?.charAt(0).toUpperCase()}</div>
             <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: '#1e293b' }}>{job.posterId?.name || 'Unknown'}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: '#1e293b', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{job.posterId?.name || 'Unknown'}</div>
               <div style={{ fontSize: 11, color: '#94a3b8' }}>{job.posterId?.rating > 0 ? `⭐ ${job.posterId.rating.toFixed(1)}` : 'New neighbour'}</div>
             </div>
             {(job.posterId?._id || job.posterId?.id) && (
@@ -262,18 +262,18 @@ function ApplyJobModal({ job, onClose, onApplied }) {
         </div>
 
         {/* Sticky Bottom Actions */}
-        <div style={{ position: 'sticky', bottom: 0, background: 'white', padding: '12px 0', borderTop: '1px solid #e2e8f0', marginTop: 12, display: 'flex', gap: 10, zIndex: 5 }}>
+        <div style={{ position: 'sticky', bottom: 0, background: 'white', padding: '12px 0', borderTop: '1px solid #e2e8f0', marginTop: 12, display: 'grid', gridTemplateColumns: '104px 1fr', gap: 10, zIndex: 5 }}>
           <button
             onClick={onClose}
             style={{
-              padding: '10px 18px', borderRadius: 12, border: 'none', fontSize: 14, fontWeight: 700,
+              padding: '10px 12px', borderRadius: 16, border: 'none', fontSize: 14, fontWeight: 700,
               cursor: 'pointer', background: '#f1f5f9', color: '#475569', minHeight: 48
             }}
           >
             Close
           </button>
           <button onClick={handleSubmit} disabled={loading} style={{
-            flex: 1, padding: 'clamp(12px, 3vw, 14px)', borderRadius: 16, border: 'none', fontSize: 14, fontWeight: 800, cursor: 'pointer',
+            padding: 'clamp(12px, 3vw, 14px)', borderRadius: 16, border: 'none', fontSize: 14, fontWeight: 800, cursor: 'pointer',
             background: 'linear-gradient(135deg, #6366f1, #4f46e5)', color: 'white',
             boxShadow: '0 4px 16px rgba(99,102,241,0.3)', opacity: loading ? 0.6 : 1, minHeight: 48
           }}>{loading ? '⏳ Sending...' : 'Send Offer to Help'}</button>

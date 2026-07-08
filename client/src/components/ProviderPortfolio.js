@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { TrustStars, BehaviourBadges } from './TrustCenter';
 import useBodyScrollLock from '../shared/useBodyScrollLock';
+import useHardwareBackClose from '../shared/useHardwareBackClose';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -15,7 +16,19 @@ function ProviderPortfolio({ providerId, providerName, onClose }) {
   const [trust, setTrust] = useState(null);
   const [verifiedWork, setVerifiedWork] = useState([]);
   const [loading, setLoading] = useState(true);
+  // Photo viewer: { photos: [url, ...], index } so the user can swipe/step
+  // through all photos of a work item instead of being stuck on one.
   const [photoView, setPhotoView] = useState(null);
+  const touchStartX = React.useRef(null);
+  useHardwareBackClose(!!photoView, () => setPhotoView(null));
+
+  const stepPhoto = (dir) => {
+    setPhotoView(pv => {
+      if (!pv) return pv;
+      const next = (pv.index + dir + pv.photos.length) % pv.photos.length;
+      return { ...pv, index: next };
+    });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -56,6 +69,7 @@ function ProviderPortfolio({ providerId, providerName, onClose }) {
       >
         {/* Header */}
         <div style={{ background: 'white', borderBottom: '1px solid #e2e8f0', padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12, flexShrink: 0 }}>
+          <button onClick={onClose} aria-label="Back" style={{ width: 40, height: 40, borderRadius: '50%', border: '1px solid #e2e8f0', background: 'white', color: '#1e293b', fontSize: 20, fontWeight: 700, cursor: 'pointer', flexShrink: 0, lineHeight: 1 }}>←</button>
           <div style={{
             width: 44, height: 44, borderRadius: '50%', flexShrink: 0,
             background: provider?.profileImage ? `url(${imgUrl(provider.profileImage)}) center/cover` : 'linear-gradient(135deg, #6366f1, #4f46e5)',
@@ -166,7 +180,7 @@ function ProviderPortfolio({ providerId, providerName, onClose }) {
                           <div style={{ display: 'flex', gap: 6, marginTop: 8, overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
                             {w.photos.map((p, i) => (
                               <img key={i} src={imgUrl(p.url)} alt={`${w.title} — on-site photo`}
-                                onClick={() => setPhotoView(imgUrl(p.url))}
+                                onClick={() => setPhotoView({ photos: w.photos.map(ph => imgUrl(ph.url)), index: i })}
                                 style={{ width: 68, height: 68, objectFit: 'cover', borderRadius: 10, flexShrink: 0, cursor: 'pointer', border: '1px solid #e2e8f0' }} />
                             ))}
                           </div>
@@ -226,13 +240,51 @@ function ProviderPortfolio({ providerId, providerName, onClose }) {
         </div>
       </div>
 
-      {/* Full-screen photo viewer */}
+      {/* Full-screen photo viewer — swipe or use ‹ › to move between photos */}
       {photoView && (
-        <div onClick={(e) => { e.stopPropagation(); setPhotoView(null); }} style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', zIndex: 10061,
-          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, cursor: 'zoom-out'
-        }}>
-          <img src={photoView} alt="Work" style={{ maxWidth: '100%', maxHeight: '90vh', borderRadius: 12 }} />
+        <div
+          onClick={(e) => { e.stopPropagation(); setPhotoView(null); }}
+          onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
+          onTouchEnd={(e) => {
+            if (touchStartX.current == null) return;
+            const dx = e.changedTouches[0].clientX - touchStartX.current;
+            touchStartX.current = null;
+            if (Math.abs(dx) > 40) { stepPhoto(dx < 0 ? 1 : -1); }
+          }}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', zIndex: 10061,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16
+          }}
+        >
+          <button onClick={(e) => { e.stopPropagation(); setPhotoView(null); }} aria-label="Back" style={{
+            position: 'absolute', top: 'calc(env(safe-area-inset-top, 0px) + 14px)', left: 14,
+            width: 44, height: 44, borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,0.15)',
+            color: 'white', fontSize: 22, fontWeight: 700, cursor: 'pointer', zIndex: 2
+          }}>←</button>
+          {photoView.photos.length > 1 && (
+            <>
+              <button onClick={(e) => { e.stopPropagation(); stepPhoto(-1); }} aria-label="Previous photo" style={{
+                position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)',
+                width: 44, height: 44, borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,0.15)',
+                color: 'white', fontSize: 24, fontWeight: 700, cursor: 'pointer', zIndex: 2
+              }}>‹</button>
+              <button onClick={(e) => { e.stopPropagation(); stepPhoto(1); }} aria-label="Next photo" style={{
+                position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                width: 44, height: 44, borderRadius: '50%', border: 'none', background: 'rgba(255,255,255,0.15)',
+                color: 'white', fontSize: 24, fontWeight: 700, cursor: 'pointer', zIndex: 2
+              }}>›</button>
+              <div style={{
+                position: 'absolute', bottom: 'calc(env(safe-area-inset-bottom, 0px) + 18px)', left: '50%', transform: 'translateX(-50%)',
+                color: 'white', fontSize: 13, fontWeight: 700, background: 'rgba(0,0,0,0.5)', borderRadius: 999, padding: '5px 14px'
+              }}>{photoView.index + 1} / {photoView.photos.length}</div>
+            </>
+          )}
+          <img
+            src={photoView.photos[photoView.index]}
+            alt="Work"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: '100%', maxHeight: '86vh', borderRadius: 12 }}
+          />
         </div>
       )}
     </div>

@@ -12,6 +12,8 @@ export default function useBodyScrollLock(active = true) {
     if (lockCount === 1) {
       body.dataset.prevOverflow = body.style.overflow || '';
       body.style.overflow = 'hidden';
+      // Lets CSS hide floating chrome (e.g. the + FAB) while an overlay is open
+      body.dataset.overlayOpen = 'true';
     }
     return () => {
       lockCount -= 1;
@@ -19,6 +21,7 @@ export default function useBodyScrollLock(active = true) {
         lockCount = 0;
         body.style.overflow = body.dataset.prevOverflow || '';
         delete body.dataset.prevOverflow;
+        delete body.dataset.overlayOpen;
       }
     };
   }, [active]);

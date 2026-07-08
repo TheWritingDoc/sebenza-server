@@ -22,6 +22,7 @@ const TYPE_CONFIG = {
   job_cancelled:        { color: '#ef4444', icon: '🚫', bg: '#fef2f2', route: '/jobs', actionLabel: 'View', actionType: 'secondary' },
   application_rejected: { color: '#ef4444', icon: '❌', bg: '#fef2f2', route: '/jobs', actionLabel: 'View', actionType: 'secondary' },
   application_withdrawn:{ color: '#64748b', icon: '🚪', bg: '#f8fafc', route: '/jobs', actionLabel: 'View', actionType: 'secondary' },
+  application_unsuccessful: { color: '#64748b', icon: '📋', bg: '#f8fafc', route: '/jobs', actionLabel: 'Find More Jobs', actionType: 'secondary' },
   rating_received:      { color: '#eab308', icon: '⭐', bg: '#fefce8', route: '/profile', actionLabel: 'View', actionType: 'primary' },
   review_submitted:     { color: '#eab308', icon: '⭐', bg: '#fefce8', route: '/transactions', actionLabel: 'View', actionType: 'primary' },
   chat_message:         { color: '#3b82f6', icon: '💬', bg: '#eff6ff', route: '/transactions', actionLabel: 'Open', actionType: 'primary' },
@@ -36,7 +37,7 @@ const TYPE_CONFIG = {
 
 // Critical notifications that require action and should NOT auto-dismiss.
 // These trigger the full-screen action popup + sound + vibration.
-const CRITICAL_TYPES = ['application_received', 'negotiation_updated', 'application_approved', 'offer_accepted', 'offer_rejected', 'schedule_confirmed', 'job_started', 'completion_requested', 'job_pending_payment', 'issue_reported'];
+const CRITICAL_TYPES = ['application_received', 'negotiation_updated', 'application_approved', 'offer_accepted', 'offer_rejected', 'schedule_confirmed', 'job_started', 'completion_requested', 'job_pending_payment', 'issue_reported', 'job_cancelled'];
 
 const DEFAULT_CONFIG = { color: '#64748b', icon: '📢', bg: '#f8fafc', route: '/dashboard', actionLabel: 'View', actionType: 'secondary' };
 
