@@ -321,10 +321,22 @@ async function proximityGuardCheck() {
     token: poster.token, body: { rating: 5 },
     files: [{ field: 'photos', name: 'insp.png', data: TINY_PNG }]
   });
+  // Manual fallback needs BOTH parties (a QR scan proves presence; a tap doesn't).
   r = await api('POST', `/api/jobs/${jobId}/payment-handshake`, {
     token: helper.token, body: { manual: true }
   });
-  expect(r.status === 200 && r.data?.paymentConfirmed === true, 'manual payment confirm works (helper)', JSON.stringify(r.data));
+  expect(r.status === 200 && r.data?.waitingForOther === true && r.data?.paymentConfirmed === false,
+    'first manual payment confirm records + waits for other party', JSON.stringify(r.data));
+  r = await api('GET', `/api/jobs/${jobId}`, { token: helper.token });
+  expect(r.data?.status === 'pending_payment', 'job still pending_payment after one manual confirm', `status=${r.data?.status}`);
+  r = await api('POST', `/api/jobs/${jobId}/payment-handshake`, {
+    token: helper.token, body: { manual: true }
+  });
+  expect(r.status === 200 && r.data?.waitingForOther === true, 'repeat manual confirm from same party still waits', JSON.stringify(r.data));
+  r = await api('POST', `/api/jobs/${jobId}/payment-handshake`, {
+    token: poster.token, body: { manual: true }
+  });
+  expect(r.status === 200 && r.data?.paymentConfirmed === true, 'second party manual confirm completes the job', JSON.stringify(r.data));
 }
 
 async function negotiationAcceptanceCheck() {

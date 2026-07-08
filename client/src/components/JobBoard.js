@@ -17,6 +17,7 @@ import useBodyScrollLock from '../shared/useBodyScrollLock';
 import useHardwareBackClose from '../shared/useHardwareBackClose';
 import printJobRecord from '../shared/printJobRecord';
 import JobMap from '../shared/JobMap';
+import NavigationMap from '../shared/NavigationMap';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -100,6 +101,7 @@ function JobBoard({ user, onViewPortfolio }) {
   const [galleryIndex, setGalleryIndex] = useState(0);
   const [showGallery, setShowGallery] = useState(false);
   const [qrHandshakeJob, setQrHandshakeJob] = useState(null);
+  const [navigationTarget, setNavigationTarget] = useState(null);
   const [paymentHandshakeJob, setPaymentHandshakeJob] = useState(null);
   const [viewingCompletionSummary, setViewingCompletionSummary] = useState(null);
   const [workflowAlert, setWorkflowAlert] = useState(null);
@@ -929,13 +931,11 @@ function JobBoard({ user, onViewPortfolio }) {
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   };
 
-  const openNavigation = (lat, lng) => {
+  // In-app navigation: opens the live map inside Sebenza (the map screen has
+  // its own hand-off button for voice directions in the phone's maps app).
+  const openNavigation = (lat, lng, title) => {
     if (!lat || !lng) return;
-    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    const url = isIOS
-      ? `http://maps.apple.com/?daddr=${lat},${lng}&dirflg=d`
-      : `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
-    window.open(url, '_blank');
+    setNavigationTarget({ lat, lng, title: title || viewingJob?.title });
   };
 
   const handleQRScanned = async ({ jobId: scannedJobId, scannedUserId, manual }) => {
@@ -1967,7 +1967,7 @@ function JobBoard({ user, onViewPortfolio }) {
                     <span style={{ fontSize: 18 }}>📱</span> Open QR Handshake
                   </button>
                   <div style={{ display: 'flex', gap: 6 }}>
-                    <button onClick={(e) => { e.stopPropagation(); openNavigation(job.location?.lat, job.location?.lng); }} style={{
+                    <button onClick={(e) => { e.stopPropagation(); openNavigation(job.location?.lat, job.location?.lng, job.title); }} style={{
                       flex: 1, padding: '12px', borderRadius: 14, border: 'none', fontSize: 13, fontWeight: 700, cursor: 'pointer',
                       background: '#dbeafe', color: '#1d4ed8', minHeight: 48, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
                     }}>🧭 Navigate</button>
@@ -2432,7 +2432,7 @@ function JobBoard({ user, onViewPortfolio }) {
                     }}>
                       <span style={{ fontSize: 18 }}>📱</span> Open QR Handshake
                     </button>
-                    <button onClick={(e) => { e.stopPropagation(); openNavigation(job.location?.lat, job.location?.lng); }} style={{
+                    <button onClick={(e) => { e.stopPropagation(); openNavigation(job.location?.lat, job.location?.lng, job.title); }} style={{
                       padding: '14px', borderRadius: 16, border: 'none', fontSize: 14, fontWeight: 700, cursor: 'pointer',
                       background: '#dbeafe', color: '#1d4ed8', whiteSpace: 'nowrap', minHeight: 52, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
                     }}>
@@ -2626,7 +2626,7 @@ function JobBoard({ user, onViewPortfolio }) {
                     <span style={{ background: job.posterReviewed ? '#dcfce7' : '#fef3c7', color: job.posterReviewed ? '#166534' : '#b45309', padding: '3px 10px', borderRadius: 20 }}>
                       {job.posterReviewed ? '✅' : '⏳'} Client rated
                     </span>
-                    <button onClick={(e) => { e.stopPropagation(); openNavigation(job.location?.lat, job.location?.lng); }} style={{
+                    <button onClick={(e) => { e.stopPropagation(); openNavigation(job.location?.lat, job.location?.lng, job.title); }} style={{
                       padding: '3px 10px', borderRadius: 10, border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer',
                       background: '#dbeafe', color: '#1d4ed8'
                     }}>🧭 Navigate</button>
@@ -4734,6 +4734,15 @@ function JobBoard({ user, onViewPortfolio }) {
           onScanned={handlePaymentQRScanned}
           handshakeMode="payment"
           job={paymentHandshakeJob}
+        />
+      )}
+
+      {navigationTarget && (
+        <NavigationMap
+          lat={navigationTarget.lat}
+          lng={navigationTarget.lng}
+          title={navigationTarget.title}
+          onClose={() => setNavigationTarget(null)}
         />
       )}
 

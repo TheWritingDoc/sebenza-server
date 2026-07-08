@@ -56,6 +56,8 @@ function CameraCapture({ onCapture, onClose, multiple = false, enforceCamera = f
   const [captured, setCaptured] = useState([]);
   const [error, setError] = useState('');
   const [showFallback, setShowFallback] = useState(false);
+  const capturingRef = useRef(false);
+  const [flash, setFlash] = useState(false);
 
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
@@ -112,9 +114,22 @@ function CameraCapture({ onCapture, onClose, multiple = false, enforceCamera = f
     }
   }, [stream]);
 
+  // The photo is added IMMEDIATELY (instant feedback); the GPS fix is patched
+  // onto its metadata when it arrives. Waiting for GPS here used to freeze the
+  // shutter for up to 10s — users tapped again and got duplicate photos.
   const finalize = useCallback(async (files) => {
-    const geo = await getCurrentPosition();
-    const enriched = await Promise.all(files.map(f => enrichPhotoWithGeo(f, geo)));
+    const enriched = await Promise.all(files.map(f => enrichPhotoWithGeo(f, null)));
+    getCurrentPosition({ enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }).then(geo => {
+      if (!geo) return;
+      enriched.forEach(f => {
+        if (f.geoMetadata) {
+          f.geoMetadata.latitude = geo.latitude;
+          f.geoMetadata.longitude = geo.longitude;
+          f.geoMetadata.accuracy = geo.accuracy;
+          f.geoMetadata.altitude = geo.altitude;
+        }
+      });
+    });
     if (multiple) {
       setCaptured(prev => [...prev, ...enriched]);
     } else {
@@ -125,18 +140,28 @@ function CameraCapture({ onCapture, onClose, multiple = false, enforceCamera = f
   }, [multiple, onCapture, onClose, stopCamera]);
 
   const capture = useCallback(async () => {
+    // Re-entry lock: a second tap while the first capture is processing must
+    // not produce a duplicate photo.
+    if (capturingRef.current) return;
     if (!videoRef.current || videoRef.current.readyState < 2) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = videoRef.current.videoWidth || 1280;
-    canvas.height = videoRef.current.videoHeight || 720;
-    const ctx = canvas.getContext('2d');
-    ctx.drawImage(videoRef.current, 0, 0);
+    capturingRef.current = true;
+    setFlash(true);
+    setTimeout(() => setFlash(false), 180);
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = videoRef.current.videoWidth || 1280;
+      canvas.height = videoRef.current.videoHeight || 720;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(videoRef.current, 0, 0);
 
-    canvas.toBlob(async (blob) => {
-      if (!blob) return;
-      const file = new File([blob], `capture_${Date.now()}.jpg`, { type: 'image/jpeg' });
-      await finalize([file]);
-    }, 'image/jpeg', 0.9);
+      const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.9));
+      if (blob) {
+        const file = new File([blob], `capture_${Date.now()}.jpg`, { type: 'image/jpeg' });
+        await finalize([file]);
+      }
+    } finally {
+      capturingRef.current = false;
+    }
   }, [finalize]);
 
   const handleFileSelect = useCallback(async (e) => {
@@ -246,6 +271,8 @@ function CameraCapture({ onCapture, onClose, multiple = false, enforceCamera = f
             muted
             style={{ flex: 1, objectFit: 'cover', width: '100%' }}
           />
+          {/* Shutter flash — visible confirmation the photo was taken */}
+          {flash && <div style={{ position: 'absolute', inset: 0, background: 'white', opacity: 0.75, zIndex: 2, pointerEvents: 'none' }} />}
           <div style={{ position: 'relative', padding: '18px 20px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 20, background: 'rgba(0,0,0,0.8)' }}>
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
               <button

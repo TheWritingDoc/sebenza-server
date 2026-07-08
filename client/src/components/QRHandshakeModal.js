@@ -405,7 +405,20 @@ function QRHandshakeModal({ jobId, userId, isPoster, onClose, onScanned, handsha
         ]);
         
         // For payment mode, show payment success; for start mode, redirect to workup
-        if (isPaymentMode) {
+        if (isPaymentMode && response.waitingForOther) {
+          // Manual confirmation needs BOTH parties — this one is recorded,
+          // the other still has to tap theirs.
+          setResult({
+            phase: 'scan_success',
+            icon: '🤝',
+            title: 'Confirmation Recorded',
+            message: response.message || 'Waiting for the other party to also confirm manually.',
+            subtext: 'They\'ve been notified. The job completes as soon as they confirm.',
+            color: '#92400e',
+            bg: '#fffbeb',
+            border: '#fde68a',
+          });
+        } else if (isPaymentMode) {
           setResult({
             phase: 'payment_success',
             icon: '🎉',

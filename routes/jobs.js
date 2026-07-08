@@ -1575,9 +1575,40 @@ router.post('/:id/payment-handshake', auth, async (req, res) => {
       }
     }
 
-    // Single-scan payment: ONE confirmation from either party (QR scan or the
-    // manual fallback) finalizes the job. Guarded flip — exactly one request
-    // wins and moves the money; the loser gets the idempotent response.
+    // ── Manual fallback requires BOTH parties ──
+    // A QR scan proves the two phones were physically together, so one scan is
+    // enough. A manual tap proves nothing, so each party must confirm manually
+    // before the money moves.
+    if (manual) {
+      const already = (Array.isArray(job.paymentConfirmedBy) ? job.paymentConfirmedBy : []).map(String);
+      if (!already.includes(String(req.userId))) {
+        await prisma.$executeRaw`
+          UPDATE jobs
+          SET payment_confirmed_by = array_append(payment_confirmed_by, ${req.userId}::uuid)
+          WHERE id = ${req.params.id}::uuid
+            AND NOT (payment_confirmed_by @> ARRAY[${req.userId}::uuid])`;
+      }
+      const confirmedNow = new Set([...already, String(req.userId)]);
+      const otherPartyId = isPoster ? String(acceptedApplicantId) : String(job.posterId);
+      if (!confirmedNow.has(otherPartyId)) {
+        notify(req, otherPartyId, {
+          type: 'job_pending_payment',
+          title: 'Confirm Payment ✋',
+          message: `${isPoster ? 'The job provider' : 'Your helper'} manually confirmed payment for "${job.title}". Add your confirmation to complete the job.`,
+          jobId: job.id
+        });
+        return res.json({
+          message: 'Your confirmation is recorded. The job completes once the other party also confirms.',
+          waitingForOther: true,
+          paymentConfirmed: false
+        });
+      }
+    }
+
+    // Single-scan payment: ONE QR confirmation from either party (or the
+    // second manual confirmation) finalizes the job. Guarded flip — exactly
+    // one request wins and moves the money; the loser gets the idempotent
+    // response.
     const finalizedGuard = await prisma.job.updateMany({
       where: { id: job.id, status: 'pending_payment' },
       data: {
@@ -1609,7 +1640,10 @@ router.post('/:id/payment-handshake', auth, async (req, res) => {
     try {
       await prisma.$executeRaw`
         UPDATE jobs
-        SET payment_confirmed_by = array_append(payment_confirmed_by, ${req.userId}::uuid),
+        SET payment_confirmed_by = CASE
+              WHEN payment_confirmed_by @> ARRAY[${req.userId}::uuid] THEN payment_confirmed_by
+              ELSE array_append(payment_confirmed_by, ${req.userId}::uuid)
+            END,
             handshake_log = handshake_log || ${logEntry}::jsonb
         WHERE id = ${req.params.id}::uuid`;
     } catch (logErr) {
