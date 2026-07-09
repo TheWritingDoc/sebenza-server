@@ -14,7 +14,10 @@ function Chat({ transactionId, otherUser, onClose }) {
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef(null);
   const token = localStorage.getItem('token');
-  const currentUser = JSON.parse(localStorage.getItem('sebenza_user') || localStorage.getItem('gshop_user') || '{}');
+  const currentUser = (() => {
+    try { return JSON.parse(localStorage.getItem('sebenza_user') || localStorage.getItem('gshop_user') || '{}'); }
+    catch (e) { return {}; }
+  })();
   const currentUserId = String(currentUser.id || currentUser._id || '');
 
   useEffect(() => {

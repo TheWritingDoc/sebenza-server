@@ -8,8 +8,21 @@ import PWAInstallPrompt from './components/PWAInstallPrompt';
 import InvitePage from './components/InvitePage';
 import NotificationSystem from './components/NotificationSystem';
 import './index.css';
+import './shared/axiosSetup'; // global JWT header + 401 → /login interceptor
 import { Home as HomeIcon, Briefcase, ClipboardList, UserCircle, Plus, Bell } from './components/Icons';
 import useHardwareBackClose from './shared/useHardwareBackClose';
+
+// Safely read a JSON value from localStorage; clears the key if it's corrupt
+// so a bad entry can't white-screen the whole app on boot.
+function safeParse(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) {
+    try { localStorage.removeItem(key); } catch (_) { /* ignore */ }
+    return null;
+  }
+}
 
 // Lazy-load heavy page components to reduce initial bundle size
 const Dashboard = lazy(() => import('./components/Dashboard'));
@@ -92,8 +105,8 @@ function App() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
 
   useEffect(() => {
-    const storedUser = localStorage.getItem('sebenza_user') || localStorage.getItem('gshop_user');
-    if (storedUser) setUser(JSON.parse(storedUser));
+    const storedUser = safeParse('sebenza_user') || safeParse('gshop_user');
+    if (storedUser) setUser(storedUser);
     setLoading(false);
   }, []);
 

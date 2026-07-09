@@ -366,10 +366,14 @@ router.post('/send-email-code', auth, async (req, res) => {
       },
     });
     const result = await sendVerificationEmail(user.email, code);
+    // In production without mail creds, be honest rather than claim it was sent.
+    if (result.configured === false && process.env.NODE_ENV === 'production') {
+      return res.status(503).json({ error: 'Email delivery is not configured yet. Please try again later.' });
+    }
     res.json({
       message: result.demo ? 'Verification code generated (demo mode)' : 'Verification code sent to your email',
       demo: result.demo || false,
-      ...(result.demo ? { code: result.code } : {}), // demo only, for testing
+      ...(result.demo ? { code: result.code } : {}), // demo only, for local testing
     });
   } catch (err) {
     console.error('Send email code error:', err);

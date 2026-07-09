@@ -59,15 +59,18 @@ async function sendVerificationEmail(to, code) {
       <p style="color:#64748b;font-size:13px">It expires in 15 minutes.</p>
     </div>`;
 
+  // SECURITY: only expose the code in the response outside production. In prod
+  // without mail creds the caller gets a "not configured" signal, never the code.
+  const isProd = process.env.NODE_ENV === 'production';
   if (!isConfigured()) {
     console.log(`Demo mode - Email code for ${to}: ${code}`);
-    return { sent: false, demo: true, code };
+    return { sent: false, demo: !isProd, code: isProd ? undefined : code, configured: false };
   }
 
   const transport = buildTransport();
   if (!transport) {
     console.log(`Email transport unavailable - code for ${to}: ${code}`);
-    return { sent: false, demo: true, code };
+    return { sent: false, demo: !isProd, code: isProd ? undefined : code, configured: false };
   }
   await transport.sendMail({ from: FROM, to, subject, text, html });
   return { sent: true, demo: false };

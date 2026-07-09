@@ -81,8 +81,11 @@ router.post(['/send', '/send-code'], auth, smsSendLimiter, async (req, res) => {
 
     if (isDemo) {
       console.log('Demo mode - SMS code:', code);
-      // Demo mode returns the code (same pattern as email verification) so the
-      // flow is fully usable before Twilio credentials are configured.
+      // SECURITY: never return the code in production. Outside prod the demo
+      // code is returned so the flow is usable before Twilio is configured.
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(503).json({ error: 'SMS delivery is not configured yet. Please try again later.' });
+      }
       res.json({
         message: 'Verification code sent (demo mode)',
         demo: true,

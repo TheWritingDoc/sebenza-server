@@ -421,6 +421,11 @@ app.post('/api/phone/start', authLimiter, async (req, res) => {
     const isDemo = !process.env.TWILIO_SID;
     if (isDemo) {
       console.log(`Demo mode - phone login code for ${phone}:`, code);
+      // SECURITY: never return the code in production. Without SMS creds a prod
+      // deploy would otherwise hand the OTP to anyone who asks → account takeover.
+      if (isProd) {
+        return res.status(503).json({ error: 'SMS delivery is not configured. Please try again later or use email.' });
+      }
       return res.json({ message: 'Verification code sent (demo mode)', demo: true, code, newUser });
     }
     const twilio = require('twilio');
@@ -533,12 +538,37 @@ app.get('/api/users/:id', async (req, res) => {
     });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const dto = sanitizeUser(user, ['bankAccount', 'email', 'phone', 'emailVerificationExpires']);
-    if (user.showOnlineStatus === false) {
-      dto.isOnline = false;
-      delete dto.lastActive;
-    }
-    dto.location = { lat: user.lat, lng: user.lng };
+    // Public profile: explicit allowlist. Never expose balances, moderation
+    // flags, referral codes, contact details, or exact GPS.
+    const dto = {
+      id: user.id,
+      _id: user.id,
+      name: user.name,
+      avatar: user.avatar,
+      profileImage: user.profileImage,
+      bio: user.bio,
+      primaryCategory: user.primaryCategory,
+      skills: user.skills,
+      accountType: user.accountType,
+      businessName: user.businessName,
+      verified: user.verified,
+      emailVerified: user.emailVerified,
+      phoneVerified: user.phoneVerified,
+      trustStars: Number(user.trustStars),
+      trustLevel: user.trustLevel,
+      rating: Number(user.rating),
+      communityStats: user.communityStats,
+      workExperience: toDTO(user.workExperience || []),
+      status: user.status,
+      isOnline: user.showOnlineStatus === false ? false : user.isOnline,
+      createdAt: user.createdAt,
+      // Coarsen public location to ~1km (2 decimals) — never the exact home GPS.
+      location: {
+        lat: Math.round((user.lat || 0) * 100) / 100,
+        lng: Math.round((user.lng || 0) * 100) / 100
+      }
+    };
+    if (user.showOnlineStatus !== false) dto.lastActive = user.lastActive;
 
     const services = await prisma.service.findMany({
       where: { providerId: req.params.id, available: true },
@@ -782,15 +812,56 @@ io.on('connection', (socket) => {
     socket.broadcast.emit('user_status_changed', { userId, isOnline: false });
   });
 
-  socket.on('join_chat', (transactionId) => {
+  // Only the two parties to a transaction may read/post its chat. Returns the
+  // transaction's requester/provider ids, or null if the socket user isn't one.
+  const isUuid = (s) => typeof s === 'string' &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+  async function chatParties(transactionId, userId) {
+    if (!isUuid(transactionId) || !userId) return null;
+    try {
+      const t = await prisma.transaction.findUnique({
+        where: { id: transactionId },
+        select: { requesterId: true, providerId: true }
+      });
+      if (!t) return null;
+      if (String(t.requesterId) !== String(userId) && String(t.providerId) !== String(userId)) return null;
+      return t;
+    } catch (err) {
+      console.error('chatParties error:', err.message);
+      return null;
+    }
+  }
+
+  socket.on('join_chat', async (transactionId) => {
+    // SECURITY: verify the socket user is a party before joining the room —
+    // otherwise anyone could subscribe to any transaction's messages.
+    const parties = await chatParties(transactionId, socket.userId);
+    if (!parties) {
+      socket.emit('error_message', { message: 'Not authorized for this chat' });
+      return;
+    }
     socket.join(`chat_${transactionId}`);
   });
 
   socket.on('send_message', async (data) => {
-    const { transactionId, receiverId, text, type, offerAmount } = data;
-    // SECURITY: the sender is always the authenticated socket user.
+    const { transactionId, text, type, offerAmount } = data;
     const senderId = socket.userId;
     if (!senderId) return;
+
+    // SECURITY: the sender must be a party to the transaction, and the receiver
+    // is derived server-side (the OTHER party) — never trusted from the client.
+    const parties = await chatParties(transactionId, senderId);
+    if (!parties) {
+      socket.emit('error_message', { message: 'Not authorized for this chat' });
+      return;
+    }
+    const receiverId = String(parties.requesterId) === String(senderId)
+      ? String(parties.providerId)
+      : String(parties.requesterId);
+
+    const safeText = String(text || '').slice(0, 2000);
+    if (!safeText.trim()) return;
+
     let savedMessage = null;
     try {
       savedMessage = await prisma.message.create({
@@ -798,9 +869,9 @@ io.on('connection', (socket) => {
           transactionId,
           senderId,
           receiverId,
-          text,
-          type: type || 'text',
-          offerAmount: offerAmount != null ? offerAmount : null
+          text: safeText,
+          type: type === 'price_offer' || type === 'price_accept' || type === 'price_reject' ? type : 'text',
+          offerAmount: offerAmount != null && !isNaN(Number(offerAmount)) ? Number(offerAmount) : null
         }
       });
     } catch (err) {
@@ -810,19 +881,19 @@ io.on('connection', (socket) => {
       _id: savedMessage?.id,
       transactionId,
       senderId: String(senderId),
-      receiverId: String(receiverId),
-      text,
+      receiverId,
+      text: safeText,
       type: type || 'text',
       offerAmount,
       createdAt: savedMessage?.createdAt?.toISOString() || new Date().toISOString()
     };
     io.to(`chat_${transactionId}`).emit('new_message', msgPayload);
-    const receiverSocketId = onlineUsers.get(String(receiverId));
+    const receiverSocketId = onlineUsers.get(receiverId);
     if (receiverSocketId) {
       io.to(receiverSocketId).emit('chat_notification', {
         transactionId,
         senderId: String(senderId),
-        text: text.substring(0, 50)
+        text: safeText.substring(0, 50)
       });
     }
   });

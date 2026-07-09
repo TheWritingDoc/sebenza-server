@@ -68,19 +68,17 @@ router.post('/request', auth, upload.array('jobImages', 10), async (req, res) =>
       return res.status(400).json({ error: 'At least 1 before photo is required. Please upload a photo of the job.' });
     }
 
-    // Only check balance for escrow payments
+    // Only check balance for escrow payments. Atomic guard: the debit only
+    // succeeds if the balance still covers it, so concurrent requests can't
+    // overdraw randBalance negative (TOCTOU).
     if (pmtMethod === 'escrow') {
-      if (Number(requester.randBalance || 0) < amount) {
+      const funded = await prisma.user.updateMany({
+        where: { id: req.userId, randBalance: { gte: amount } },
+        data: { randBalance: { decrement: amount }, escrowRand: { increment: amount } }
+      });
+      if (funded.count === 0) {
         return res.status(400).json({ error: 'Insufficient Rand balance' });
       }
-      // Move Rand to escrow
-      await prisma.user.update({
-        where: { id: req.userId },
-        data: {
-          randBalance: { decrement: amount },
-          escrowRand: { increment: amount }
-        }
-      });
     }
 
     // Fetch service location for GPS navigation
@@ -219,18 +217,15 @@ router.post('/accept-quote/:id', auth, async (req, res) => {
     if (transaction.paymentMethod === 'escrow' && transaction.escrowStatus === 'held') {
       const original = Number(transaction.randAmount || 0);
       const diff = lastQuote.amount - original;
-      const requester = await prisma.user.findUnique({ where: { id: req.userId } });
       if (diff > 0) {
-        if (Number(requester.randBalance || 0) < diff) {
+        // Atomic top-up: only debit if the balance covers the increase.
+        const funded = await prisma.user.updateMany({
+          where: { id: req.userId, randBalance: { gte: diff } },
+          data: { randBalance: { decrement: diff }, escrowRand: { increment: diff } }
+        });
+        if (funded.count === 0) {
           return res.status(400).json({ error: 'Insufficient balance for increased quote' });
         }
-        await prisma.user.update({
-          where: { id: req.userId },
-          data: {
-            randBalance: { decrement: diff },
-            escrowRand: { increment: diff }
-          }
-        });
       } else if (diff < 0) {
         await prisma.user.update({
           where: { id: req.userId },
@@ -326,31 +321,27 @@ router.post('/complete/:id', auth, upload.array('proofImages', 10), async (req, 
 
     let escrowStatus = transaction.escrowStatus;
 
-    // Only handle escrow for escrow payments
+    // Only handle escrow for escrow payments. The whole release runs in one
+    // ACID transaction with a conditional guard (escrowStatus must still be
+    // 'held'), so two concurrent completes cannot both pay the provider.
     if (transaction.paymentMethod === 'escrow') {
-      const requester = await prisma.user.findUnique({ where: { id: transaction.requesterId } });
-      const provider = await prisma.user.findUnique({ where: { id: transaction.providerId } });
+      await prisma.$transaction(async (tx) => {
+        const guard = await tx.transaction.updateMany({
+          where: { id: transaction.id, escrowStatus: 'held' },
+          data: { escrowStatus: 'released' }
+        });
+        if (guard.count === 0) return; // already released — never double-pay
 
-      if (!requester || !provider) {
-        return res.status(400).json({ error: 'Requester or provider not found' });
-      }
-
-      // Ensure balances are non-negative and do not exceed escrow held
-      const escrowHeld = Number(requester.escrowRand || 0);
-      const releaseAmount = Math.min(finalAmount, escrowHeld);
-      if (releaseAmount <= 0) {
-        return res.status(400).json({ error: 'No escrow funds to release' });
-      }
-
-      await prisma.user.update({
-        where: { id: requester.id },
-        data: { escrowRand: escrowHeld - releaseAmount }
-      });
-      await prisma.user.update({
-        where: { id: provider.id },
-        data: {
-          randBalance: { increment: releaseAmount },
-          totalEarnedRand: { increment: releaseAmount }
+        const requester = await tx.user.findUnique({ where: { id: transaction.requesterId }, select: { escrowRand: true } });
+        const escrowHeld = Number(requester?.escrowRand || 0);
+        const releaseAmount = Math.min(finalAmount, escrowHeld);
+        if (releaseAmount > 0) {
+          await tx.user.update({ where: { id: transaction.requesterId }, data: { escrowRand: { decrement: releaseAmount } } });
+          await tx.user.update({
+            where: { id: transaction.providerId },
+            data: { randBalance: { increment: releaseAmount }, totalEarnedRand: { increment: releaseAmount } }
+          });
+          await tx.user.updateMany({ where: { id: transaction.requesterId, escrowRand: { lt: 0 } }, data: { escrowRand: 0 } });
         }
       });
       escrowStatus = 'released';
@@ -575,23 +566,29 @@ router.post('/cancel/:id', auth, async (req, res) => {
 
     let escrowStatus = transaction.escrowStatus;
 
-    // Only refund for escrow payments
+    // Only refund for escrow payments. Guarded so two concurrent cancels can't
+    // both refund the same held escrow (which would mint rand).
     if (transaction.paymentMethod === 'escrow') {
-      const amount = Number(transaction.randAmount || 0);
-      await prisma.user.update({
-        where: { id: transaction.requesterId },
-        data: {
-          escrowRand: { decrement: amount },
-          randBalance: { increment: amount }
-        }
+      await prisma.$transaction(async (tx) => {
+        const guard = await tx.transaction.updateMany({
+          where: { id: transaction.id, escrowStatus: 'held' },
+          data: { escrowStatus: 'refunded', status: 'cancelled' }
+        });
+        if (guard.count === 0) return; // already refunded/released
+        const amount = Number(transaction.randAmount || 0);
+        await tx.user.update({
+          where: { id: transaction.requesterId },
+          data: { escrowRand: { decrement: amount }, randBalance: { increment: amount } }
+        });
+        await tx.user.updateMany({ where: { id: transaction.requesterId, escrowRand: { lt: 0 } }, data: { escrowRand: 0 } });
       });
       escrowStatus = 'refunded';
+    } else {
+      await prisma.transaction.update({
+        where: { id: transaction.id },
+        data: { status: 'cancelled', escrowStatus }
+      });
     }
-
-    await prisma.transaction.update({
-      where: { id: transaction.id },
-      data: { status: 'cancelled', escrowStatus }
-    });
 
     res.json({ message: transaction.paymentMethod === 'cash' ? 'Transaction cancelled.' : 'Transaction cancelled. Rand refunded.' });
   } catch (err) {
