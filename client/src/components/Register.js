@@ -32,6 +32,7 @@ function Register({ setUser }) {
   const [selectedCity, setSelectedCity] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [acceptTerms, setAcceptTerms] = useState(false);
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const referralCode = searchParams.get('ref') || '';
@@ -64,13 +65,14 @@ function Register({ setUser }) {
   const canProceed = () => {
     if (step === 1) return formData.name.trim().length >= 2 && emailOk && formData.password.length >= 6;
     if (step === 2) return accountType === 'individual' || businessName.trim().length >= 2;
-    if (step === 3) return !!location;
+    if (step === 3) return !!location && acceptTerms;
     return true;
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!location) { setError('Please select your city'); return; }
+    if (!acceptTerms) { setError('Please accept the Terms and Privacy Policy'); return; }
     setLoading(true);
     setError('');
     try {
@@ -80,7 +82,8 @@ function Register({ setUser }) {
         ref: referralCode,
         accountType,
         businessName: accountType === 'individual' ? '' : businessName,
-        teamSize: accountType === 'team' ? teamSize : 1
+        teamSize: accountType === 'team' ? teamSize : 1,
+        acceptTerms: true
       }, {
         withCredentials: true
       });
@@ -271,6 +274,19 @@ function Register({ setUser }) {
                   <div className="text-gray-900 font-medium">{selectedCity || (locationMode === 'gps' ? 'GPS detected' : 'Not set yet')}</div>
                 </div>
               </div>
+
+              {/* POPIA consent */}
+              <label className="flex items-start gap-3 bg-gray-50 rounded-xl p-3 cursor-pointer">
+                <input type="checkbox" checked={acceptTerms} onChange={(e) => setAcceptTerms(e.target.checked)}
+                  className="mt-0.5 w-5 h-5 flex-shrink-0 accent-blue-600" />
+                <span className="text-xs text-gray-600 leading-relaxed">
+                  I am 18 or older and I agree to Sebenza's{' '}
+                  <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 font-semibold underline">Terms of Service</a>
+                  {' '}and{' '}
+                  <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-blue-600 font-semibold underline">Privacy Policy</a>,
+                  including the collection of my identity documents and location as described.
+                </span>
+              </label>
 
               <div className="flex gap-3">
                 <button type="button" onClick={() => setStep(2)}

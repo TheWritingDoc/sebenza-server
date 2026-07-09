@@ -37,6 +37,8 @@ const PublicProfile = lazy(() => import('./components/PublicProfile'));
 const Chat = lazy(() => import('./components/Chat'));
 const JobBoard = lazy(() => import('./components/JobBoard'));
 const TeamManager = lazy(() => import('./components/TeamManager'));
+const PrivacyPolicy = lazy(() => import('./components/LegalPages').then(m => ({ default: m.PrivacyPolicy })));
+const TermsOfService = lazy(() => import('./components/LegalPages').then(m => ({ default: m.TermsOfService })));
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -276,6 +278,8 @@ function App() {
               <Route path="/user/:id" element={<PublicProfile />} />
               <Route path="/team" element={user ? <TeamManager user={user} /> : <Navigate to="/login" />} />
               <Route path="/invite" element={<InvitePage />} />
+              <Route path="/privacy" element={<PrivacyPolicy />} />
+              <Route path="/terms" element={<TermsOfService />} />
               <Route path="*" element={<Navigate to={user ? '/dashboard' : '/'} replace />} />
             </Routes>
           </Suspense>

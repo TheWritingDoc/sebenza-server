@@ -351,6 +351,13 @@ function Home() {
           </p>
         </div>
       </section>
+
+      <footer style={{ textAlign: 'center', padding: '20px 16px 32px', color: '#94a3b8', fontSize: 13 }}>
+        <Link to="/privacy" style={{ color: '#64748b', textDecoration: 'none', margin: '0 10px' }}>Privacy Policy</Link>
+        ·
+        <Link to="/terms" style={{ color: '#64748b', textDecoration: 'none', margin: '0 10px' }}>Terms of Service</Link>
+        <div style={{ marginTop: 8 }}>© {new Date().getFullYear()} Sebenza</div>
+      </footer>
     </div>
   );
 }

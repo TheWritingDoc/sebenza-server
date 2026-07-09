@@ -33,6 +33,10 @@ if (isProd && (!JWT_SECRET || JWT_SECRET === 'your-secret-key')) {
 const effectiveJwtSecret = JWT_SECRET || 'your-secret-key';
 process.env.JWT_SECRET = effectiveJwtSecret; // ensure all routes/middleware use the same secret
 
+// Current legal document version. Bump when Terms/Privacy materially change so
+// existing users can be re-prompted to re-accept.
+const TERMS_VERSION = '2026-07-08';
+
 // Postgres (Supabase) connection status — used by /api/health and the socket
 // handlers so a transient DB outage degrades gracefully instead of crashing.
 let dbConnected = false;
@@ -246,7 +250,13 @@ app.post('/api/register', authLimiter, [
       return res.status(400).json({ error: 'Validation failed', details: errors.array() });
     }
 
-    const { name, email, phone, password, location, skills, primaryCategory, ref, accountType, businessName, teamSize } = req.body;
+    const { name, email, phone, password, location, skills, primaryCategory, ref, accountType, businessName, teamSize, acceptTerms } = req.body;
+
+    // POPIA: explicit consent to Terms + Privacy is required to register (the
+    // app collects ID documents, selfies and location).
+    if (acceptTerms !== true && acceptTerms !== 'true') {
+      return res.status(400).json({ error: 'You must accept the Terms of Service and Privacy Policy to create an account' });
+    }
 
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) {
@@ -288,6 +298,8 @@ app.post('/api/register', authLimiter, [
         accountType: ['individual', 'team', 'business'].includes(accountType) ? accountType : 'individual',
         businessName: String(businessName || '').trim().slice(0, 120),
         teamSize: Math.max(1, Math.min(50, parseInt(teamSize) || 1)),
+        termsAcceptedAt: new Date(),
+        termsVersion: TERMS_VERSION,
         communityStats: {
           reliabilityScore: 100, givenRatingsAvg: 0, receivedRatingsAvg: 0,
           totalGivenReviews: 0, totalReceivedReviews: 0, complainerScore: 0,
@@ -380,6 +392,10 @@ app.post('/api/phone/start', authLimiter, async (req, res) => {
       if (name.length < 2) {
         return res.status(400).json({ error: 'NEW_USER_NAME_REQUIRED', message: 'Tell us your name to create your account' });
       }
+      // POPIA consent required to create the account.
+      if (req.body.acceptTerms !== true && req.body.acceptTerms !== 'true') {
+        return res.status(400).json({ error: 'TERMS_REQUIRED', message: 'Please accept the Terms and Privacy Policy to continue' });
+      }
       // Placeholder login identity — the user can add a real email later
       // (verifying it earns a star). Random password: phone+code is the login.
       const placeholderEmail = `p${phone.replace(/\D/g, '')}@phone.sebenza.app`;
@@ -399,6 +415,8 @@ app.post('/api/phone/start', authLimiter, async (req, res) => {
             skills: ['General work/Helper'],
             primaryCategory: 'General work/Helper',
             referralCode,
+            termsAcceptedAt: new Date(),
+            termsVersion: TERMS_VERSION,
             communityStats: {
               reliabilityScore: 100, givenRatingsAvg: 0, receivedRatingsAvg: 0,
               totalGivenReviews: 0, totalReceivedReviews: 0, complainerScore: 0,

@@ -15,6 +15,7 @@ function Login({ setUser }) {
   const [phone, setPhone] = useState('');
   const [name, setName] = useState('');
   const [needName, setNeedName] = useState(false);
+  const [acceptTerms, setAcceptTerms] = useState(false);
   const [stage, setStage] = useState('start'); // 'start' | 'code'
   const [code, setCode] = useState('');
   const [demoCode, setDemoCode] = useState('');
@@ -50,15 +51,17 @@ function Login({ setUser }) {
   const phoneStart = async (e) => {
     e.preventDefault();
     setLoading(true); setError(''); setInfo('');
+    if (needName && !acceptTerms) { setError('Please accept the Terms and Privacy Policy'); setLoading(false); return; }
     try {
-      const res = await axios.post(`${API_URL}/api/phone/start`, { phone, name });
+      const res = await axios.post(`${API_URL}/api/phone/start`, { phone, name, acceptTerms });
       if (res.data.demo && res.data.code) setDemoCode(res.data.code);
       setStage('code');
       setInfo(res.data.newUser ? 'Welcome! Enter the code to activate your account.' : 'Enter the code we sent to your phone.');
     } catch (err) {
-      if (err.response?.data?.error === 'NEW_USER_NAME_REQUIRED') {
+      const code = err.response?.data?.error;
+      if (code === 'NEW_USER_NAME_REQUIRED' || code === 'TERMS_REQUIRED') {
         setNeedName(true);
-        setInfo('New number — add your name and we\'ll create your account.');
+        setInfo('New number — add your name and accept the terms to create your account.');
       } else {
         setError(err.response?.data?.error || 'Could not send the code');
       }
@@ -125,18 +128,30 @@ function Login({ setUser }) {
               />
             </div>
             {needName && (
-              <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">Your name</label>
-                <input
-                  type="text"
-                  autoComplete="name"
-                  className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all text-sm"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Thabo Mokoena"
-                  required
-                />
-              </div>
+              <>
+                <div>
+                  <label className="block text-sm font-semibold text-gray-700 mb-1">Your name</label>
+                  <input
+                    type="text"
+                    autoComplete="name"
+                    className="w-full p-3 border-2 border-gray-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-200 transition-all text-sm"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="e.g. Thabo Mokoena"
+                    required
+                  />
+                </div>
+                <label className="flex items-start gap-3 bg-gray-50 rounded-xl p-3 cursor-pointer">
+                  <input type="checkbox" checked={acceptTerms} onChange={(e) => setAcceptTerms(e.target.checked)}
+                    className="mt-0.5 w-5 h-5 flex-shrink-0 accent-blue-600" />
+                  <span className="text-xs text-gray-600 leading-relaxed">
+                    I am 18 or older and agree to the{' '}
+                    <a href="/terms" target="_blank" rel="noopener noreferrer" className="text-blue-600 font-semibold underline">Terms</a>
+                    {' '}and{' '}
+                    <a href="/privacy" target="_blank" rel="noopener noreferrer" className="text-blue-600 font-semibold underline">Privacy Policy</a>.
+                  </span>
+                </label>
+              </>
             )}
             <button
               type="submit"
