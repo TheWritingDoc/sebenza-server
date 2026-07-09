@@ -10,49 +10,29 @@ Legend: **P0** = do not launch without · **P1** = before real money / any scale
 
 ## P0 — Launch blockers (security & correctness)
 
-- [ ] **OTP/verification codes are returned in API responses.** `/api/phone/start`
-  (index.js:424), `routes/sms.js:88`, `routes/users.js` email-code, `utils/email.js:64/70`
-  all return `code` when provider creds are missing — gated on `!TWILIO_SID`, **NOT**
-  on `NODE_ENV`. Anyone can request a code for any number/email and read it → full
-  account takeover. **Fix:** gate every `demo/code` return behind
-  `NODE_ENV !== 'production'`, and refuse to boot in prod without SMS + mail creds.
-  (Also set the real Twilio + SMTP env vars — see P0 "Env".)
-- [ ] **Public profile leaks wallet + exact location.** `GET /api/users/:id` (index.js:528,
-  no auth) returns `randBalance`, `escrowRand`, `credits`, `totalEarnedRand`, `flags`,
-  `referralCode`, `paidProfileViews`, and **exact** lat/lng. **Fix:** whitelist public
-  fields only; coarsen location to ~1km (as `/nearby` already does).
-- [ ] **Double-refund race in legacy transactions flow.** `POST /transactions/cancel/:id`
-  (transactions.js:562) reads then credits `randBalance` with no `escrowStatus:'held'`
-  guard → two concurrent cancels refund twice, minting rand. **Fix:** route through the
-  guarded `refundEscrow()` in utils/escrow.js.
-- [ ] **Double-pay race in legacy complete flow.** `POST /transactions/complete/:id`
-  (transactions.js:291) hand-rolls the release with no atomic guard. **Fix:** route
-  through guarded `releaseEscrow()`.
-- [ ] **TOCTOU overdraw in `/transactions/request` and `/accept-quote`.** Balance check
-  then separate decrement (transactions.js:72, 219) → concurrent requests drive
-  `randBalance` negative. **Fix:** atomic `updateMany({where:{randBalance:{gte:amount}}})`,
-  branch on `count`.
-  > Note: the newer `jobs.js` escrow paths are already guarded and safe. All four money
-  > bugs are in the older `routes/transactions.js` service-request flow. If that flow is
-  > not used at launch, disabling its routes is an acceptable interim fix.
-- [ ] **Socket `join_chat` + `send_message` have no membership check.** (index.js:785, 789)
-  Any authed user joins any transaction's chat room and injects messages to any
-  `receiverId`. **Fix:** verify the socket user is a party to the transaction; derive
-  `receiverId` server-side.
-- [ ] **Revoke the test admin.** `poster.sebenza.test1@example.com` currently has
-  `role='admin'` in the prod DB (set during a KYC-approval test). **Fix:** `UPDATE users
-  SET role='client' WHERE email='poster.sebenza.test1@example.com';` and remove all seed
-  test accounts from prod.
-- [ ] **Client: global 401 handler.** No axios interceptor exists (0 matches for `401`
-  in src); an expired 30-day JWT silently breaks screens while the user still "looks"
-  logged in. **Fix:** one axios response interceptor that clears storage → `/login` on 401.
-- [ ] **Client: crash on boot from bad localStorage.** `App.js:96` and `Chat.js:17`
-  `JSON.parse(storedUser)` with no try/catch → corrupt storage white-screens the app
-  every launch. **Fix:** wrap in try/catch, clear the key on failure.
-- [ ] **Env / secrets set in Render (prod):** `TWILIO_SID/TOKEN/PHONE` (real SMS),
-  `EMAIL_HOST/USER/PASS` + `EMAIL_FROM` (real mail), confirm `JWT_SECRET` is a strong
-  random value, `NODE_ENV=production`, `CORS_ORIGINS` locked to real origins.
-- [ ] **`npm audit fix`** — 5 high (ws DoS via socket.io-adapter). Re-run to confirm 0 high.
+- [x] **DONE (ec850af)** OTP/verification codes no longer returned in production —
+  phone/start, sms, email-code all gated on NODE_ENV; endpoints return 503 in prod
+  when SMS/mail unconfigured. Verified live.
+- [x] **DONE (ec850af)** Public profile `GET /api/users/:id` is now an explicit
+  allowlist — no balances/flags/referralCode/contact; location coarsened to ~1km.
+  Verified live (no leaked fields).
+- [x] **DONE (ec850af)** `/transactions/cancel` refund now runs in a guarded
+  `$transaction` (escrowStatus:'held' condition) — no double-refund.
+- [x] **DONE (ec850af)** `/transactions/complete` release now guarded — no double-pay.
+- [x] **DONE (ec850af)** `/transactions/request` + `/accept-quote` use atomic balance
+  guards — no overdraw.
+- [x] **DONE (ec850af)** Socket `join_chat`/`send_message` verify transaction
+  membership; receiverId derived server-side; text length-capped.
+- [x] **DONE** Test admin revoked — 0 admin accounts in prod DB. Verified.
+- [x] **DONE (ec850af)** Client global axios interceptor: attaches JWT + on 401 clears
+  session → /login. Verified in build.
+- [x] **DONE (ec850af)** Safe localStorage parse on boot (App.js `safeParse`, Chat.js).
+- [x] **DONE** `npm audit fix` → 0 vulnerabilities (was 5 high). Verified.
+- [ ] **⚠️ REQUIRED — set provider creds in Render before launch:** `TWILIO_SID/TOKEN/PHONE`
+  (real SMS) + `EMAIL_HOST/USER/PASS` + `EMAIL_FROM` (real mail). **Because of the OTP
+  gate above, phone signup and email verification now return 503 in production until
+  these are set.** Email+password login still works. Confirm `JWT_SECRET` is strong,
+  `NODE_ENV=production`, `CORS_ORIGINS` locked to real origins.
 
 ## P0 — Legal / store (cannot ship without)
 
