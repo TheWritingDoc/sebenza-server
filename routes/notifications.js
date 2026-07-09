@@ -85,6 +85,19 @@ router.patch('/read-all', auth, async (req, res) => {
   }
 });
 
+// DELETE /api/notifications - clear ALL of the user's notifications.
+// (The "Clear all" button called this, but the route was missing, so it
+// silently did nothing and the list reappeared on the next poll.)
+router.delete('/', auth, async (req, res) => {
+  try {
+    const result = await prisma.notification.deleteMany({ where: { userId: req.userId } });
+    res.json({ message: 'All notifications cleared', deleted: result.count });
+  } catch (err) {
+    console.error('Clear all notifications error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 // DELETE /api/notifications/:id - delete a notification
 router.delete('/:id', auth, async (req, res) => {
   try {
