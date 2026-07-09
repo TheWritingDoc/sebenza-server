@@ -36,12 +36,17 @@ Legend: **P0** = do not launch without · **P1** = before real money / any scale
 
 ## P0 — Legal / store (cannot ship without)
 
-- [ ] **Privacy policy + terms** hosted at a public URL. The app collects **ID documents,
-  selfies, and location** → POPIA (SA) + Play Data Safety both require it.
-- [ ] **Consent capture at registration** — checkbox + stored `termsAcceptedAt`. Neither
-  Register.js nor `POST /register` records consent today.
-- [ ] **Play Store target SDK 35.** `client/android/variables.gradle:4` is 34; Google
-  rejects new submissions below 35 (since Aug 2025). Also bump `versionCode`/`versionName`.
+- [x] **DONE (18d3552)** Privacy Policy + Terms hosted at `/privacy` and `/terms`
+  (POPIA-aware; cover KYC docs, location, flags, user rights). Verified live (200).
+- [x] **DONE (18d3552)** Consent capture at registration — checkbox on Register step 3
+  and phone signup; server records `termsAcceptedAt` + `termsVersion` and rejects
+  signup without it. Verified live (rejects without, records with).
+- [x] **DONE (18d3552)** Android targetSdk/compileSdk → 35, versionCode 1→2,
+  versionName 1.0.1.
+- [ ] **Play Console setup (owner, in the console — not code):** enter the privacy
+  policy URL `https://<your-domain>/privacy`, fill the **Data Safety** form (ID docs,
+  location, contact info collected), complete content rating, and generate a signed
+  release (needs your keystore). App icons/screenshots for the listing.
 
 ---
 
