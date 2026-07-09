@@ -39,6 +39,14 @@ const TYPE_CONFIG = {
 // These trigger the full-screen action popup + sound + vibration.
 const CRITICAL_TYPES = ['application_received', 'negotiation_updated', 'application_approved', 'offer_accepted', 'offer_rejected', 'schedule_confirmed', 'job_started', 'completion_requested', 'job_pending_payment', 'issue_reported', 'job_cancelled'];
 
+// Linear job-lifecycle steps — must match STEP_TYPES on the server. When a newer
+// step arrives for a job, earlier ones are stale and get cleared from the screen.
+const STEP_TYPES_CLIENT = new Set([
+  'application_received', 'application_approved', 'negotiation_updated', 'offer_accepted',
+  'offer_rejected', 'schedule_confirmed', 'schedule_declined', 'job_started',
+  'completion_requested', 'job_pending_payment', 'payment_confirmed', 'job_completed',
+]);
+
 const DEFAULT_CONFIG = { color: '#64748b', icon: '📢', bg: '#f8fafc', route: '/dashboard', actionLabel: 'View', actionType: 'secondary' };
 
 const WORK_HUB_TYPES = new Set([
@@ -255,47 +263,41 @@ export default function NotificationSystem({ user, socket, panelOpen: controlled
 
       if (notif._id && seenIdsRef.current) seenIdsRef.current.add(notif._id);
 
+      // The user moved to the next step: clear the previous step's messages for
+      // this job — mark them read and remove their toasts, and close the action
+      // popup if it belonged to an earlier step of the same job.
+      const supersedeJob = notif.supersedeJob || (notif.jobId && STEP_TYPES_CLIENT.has(notif.type) ? notif.jobId : null);
+      if (supersedeJob) {
+        setNotifications(prev => prev.map(n =>
+          (n.jobId === supersedeJob && n._id !== notif._id && STEP_TYPES_CLIENT.has(n.type))
+            ? { ...n, read: true } : n
+        ));
+        setToasts(prev => prev.filter(t =>
+          !(t.jobId === supersedeJob && t._id !== notif._id && STEP_TYPES_CLIENT.has(t.type))
+        ));
+        setActionPopup(prev =>
+          (prev && prev.jobId === supersedeJob && prev._id !== notif._id) ? null : prev
+        );
+      }
+
       setNotifications(prev => {
         const exists = prev.find(n => n._id === notif._id);
         if (exists) return prev;
         return [notif, ...prev];
       });
 
-      // Critical: large blocking popup the user must tap (Proceed / Close)
-      if (isCritical) setActionPopup(notif);
-
-      const toastId = notif._id || Date.now() + Math.random();
-      setToasts(prev => [...prev, { ...notif, toastId, isCritical }]);
-
-      // Critical notifications stay on screen until manually dismissed
-      if (!isCritical) {
+      // ONE surface per event, not three: critical → a single blocking popup the
+      // user must act on; everything else → a single auto-dismissing toast.
+      // (No more duplicate toast-next-to-popup, no synthetic "progress" toasts.)
+      if (isCritical) {
+        setActionPopup(notif);
+      } else {
+        const toastId = notif._id || Date.now() + Math.random();
+        setToasts(prev => [...prev, { ...notif, toastId, isCritical: false }]);
         const timer = setTimeout(() => {
           setToasts(prev => prev.filter(t => t.toastId !== toastId));
         }, 6000);
         timeoutsRef.current.push(timer);
-      }
-
-      if (notif.type === 'job_started') {
-        const pid = 'progress-' + toastId;
-        setToasts(prev => [...prev, {
-          toastId: pid,
-          kind: 'progress',
-          title: 'Step 1 complete ✅',
-          message: 'When work is done, come back to confirm payment',
-          type: notif.type,
-          createdAt: new Date().toISOString()
-        }]);
-      }
-      if (notif.type === 'job_pending_payment') {
-        const pid = 'progress-' + toastId;
-        setToasts(prev => [...prev, {
-          toastId: pid,
-          kind: 'progress',
-          title: 'Step 2 of 2',
-          message: 'Scan QR code to confirm payment',
-          type: notif.type,
-          createdAt: new Date().toISOString()
-        }]);
       }
 
       // Notify other components to refresh job data when a job-related notification arrives
