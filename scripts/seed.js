@@ -4,6 +4,12 @@ require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const { prisma } = require('../db');
 
+// Safety: never seed known-password test accounts into a production database.
+if (process.env.NODE_ENV === 'production' && !process.env.ALLOW_SEED) {
+  console.error('Refusing to seed test accounts in production. Set ALLOW_SEED=1 to override.');
+  process.exit(1);
+}
+
 async function main() {
   const password = await bcrypt.hash('TestPass123!', 10);
   const stats = {

@@ -105,11 +105,31 @@ async function uploadFile(file, folder) {
   if (bucket === 'uploads') {
     return supabase.storage.from(bucket).getPublicUrl(objectPath).data.publicUrl;
   }
-  // Private documents: store a long-lived signed URL (1 year) — these are
-  // only ever surfaced to the owner and admins.
-  const { data, error: signErr } = await supabase.storage.from(bucket)
-    .createSignedUrl(objectPath, 60 * 60 * 24 * 365);
-  if (signErr) throw new Error(`Storage sign failed: ${signErr.message}`);
+  // Private documents (KYC/ID): store only a reference to the object, NOT a
+  // long-lived URL. A short-lived signed URL is minted on each authenticated
+  // read (see signSecureUrl / verification.js), so a leaked link expires in
+  // minutes instead of a year.
+  return `${SECURE_SCHEME}${bucket}/${objectPath}`;
+}
+
+// Marker for stored private-doc references, e.g. "securedoc://secure-docs/trust/id/123.png".
+const SECURE_SCHEME = 'securedoc://';
+
+/**
+ * Mint a short-lived signed URL for a stored private-doc reference.
+ * @param {string} stored - value saved by uploadFile (securedoc://bucket/path)
+ * @param {number} expiresSeconds - default 5 minutes
+ * @returns {Promise<string|null>} signed URL, or null if not a secure ref
+ */
+async function signSecureUrl(stored, expiresSeconds = 300) {
+  if (!storageEnabled || typeof stored !== 'string' || !stored.startsWith(SECURE_SCHEME)) return null;
+  const rest = stored.slice(SECURE_SCHEME.length); // "bucket/path/to/obj"
+  const slash = rest.indexOf('/');
+  if (slash < 0) return null;
+  const bucket = rest.slice(0, slash);
+  const objectPath = rest.slice(slash + 1);
+  const { data, error } = await supabase.storage.from(bucket).createSignedUrl(objectPath, expiresSeconds);
+  if (error) throw new Error(`Storage sign failed: ${error.message}`);
   return data.signedUrl;
 }
 
@@ -121,5 +141,6 @@ async function uploadFiles(files, folder) {
 module.exports = upload;
 module.exports.uploadFile = uploadFile;
 module.exports.uploadFiles = uploadFiles;
+module.exports.signSecureUrl = signSecureUrl;
 module.exports.storageEnabled = storageEnabled;
 module.exports.resolveFolder = resolveFolder;

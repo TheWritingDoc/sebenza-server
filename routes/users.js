@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const { prisma } = require('../db');
 const { toDTO, sanitizeUser, isId } = require('../utils/dto');
 const upload = require('../middleware/upload');
@@ -9,6 +10,18 @@ const { computeTrust, computeCommunityStars, totalStars, refreshTrust } = requir
 const { sendVerificationEmail } = require('../utils/email');
 
 const genCode = () => Math.floor(100000 + Math.random() * 900000).toString();
+
+// Light per-user guards against storage / notification spam.
+const perUserLimiter = (max, windowMs = 60 * 60 * 1000) => rateLimit({
+  windowMs, max,
+  keyGenerator: (req) => (req.user && req.user.userId) || ipKeyGenerator(req),
+  message: { error: 'Too many requests. Please slow down and try again shortly.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+const docUploadLimiter = perUserLimiter(20);
+const endorseLimiter = perUserLimiter(60);
+const emailCodeLimiter = perUserLimiter(5, 15 * 60 * 1000);
 
 const optionalAuth = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
@@ -233,7 +246,7 @@ router.get('/:id/trust', async (req, res) => {
 // Upload a trust document (address / id / drivers_license / qualification).
 // Uploaded docs count toward stars immediately (encourages ID) and are marked
 // 'pending' for optional admin review; a rejected doc stops counting.
-router.post('/trust-docs', auth, upload.single('trustDoc'), async (req, res) => {
+router.post('/trust-docs', auth, docUploadLimiter, upload.single('trustDoc'), async (req, res) => {
   try {
     const { docType, title } = req.body;
     const allowed = ['address', 'id', 'drivers_license', 'qualification', 'experience'];
@@ -320,7 +333,7 @@ router.get('/:id/verified-work', async (req, res) => {
 });
 
 // Add a work-experience entry (no document required — self-declared)
-router.post('/work-experience', auth, async (req, res) => {
+router.post('/work-experience', auth, docUploadLimiter, async (req, res) => {
   try {
     const { title, place, years } = req.body;
     if (!title || !title.trim()) return res.status(400).json({ error: 'Please describe the work you did' });
@@ -348,7 +361,7 @@ router.post('/work-experience', auth, async (req, res) => {
 // (no SMTP creds) returns the code so the flow is testable immediately.
 
 // Send / resend an email verification code to the signed-in user's address
-router.post('/send-email-code', auth, async (req, res) => {
+router.post('/send-email-code', auth, emailCodeLimiter, async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user.userId },
@@ -463,7 +476,7 @@ router.get('/businesses', async (req, res) => {
 
 // ===== RECOMMEND / ENDORSE A USER =====
 // "I vouch for this person." One endorsement per user; toggle on/off.
-router.post('/:id/endorse', auth, async (req, res) => {
+router.post('/:id/endorse', auth, endorseLimiter, async (req, res) => {
   try {
     const targetId = req.params.id;
     if (String(targetId) === String(req.user.userId)) {

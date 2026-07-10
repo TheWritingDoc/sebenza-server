@@ -149,6 +149,14 @@ router.get('/documents/:type', auth, async (req, res) => {
       return res.status(404).json({ error: 'Document not found' });
     }
     const fileUrl = verification[type];
+    // Private-doc reference → mint a short-lived signed URL (5 min) on each
+    // authenticated read, so a captured link expires quickly.
+    if (fileUrl.startsWith('securedoc://')) {
+      const { signSecureUrl } = require('../middleware/upload');
+      const signed = await signSecureUrl(fileUrl, 300);
+      if (!signed) return res.status(404).json({ error: 'Document not found' });
+      return res.redirect(signed);
+    }
     if (!fileUrl.startsWith('http')) {
       // Legacy local file fallback: only available when remote storage is not
       // in play. Use path.basename so a tampered stored value can never
@@ -161,7 +169,7 @@ router.get('/documents/:type', auth, async (req, res) => {
       }
       return res.sendFile(filePath);
     }
-    // Remote storage URL: redirect through the authenticated gate.
+    // Legacy remote URL (pre-hardening long-lived signed URL): redirect as-is.
     res.redirect(fileUrl);
   } catch (err) {
     console.error('Document fetch error:', err);

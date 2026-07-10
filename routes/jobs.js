@@ -83,6 +83,13 @@ function toPublicJob(job, requesterId) {
   delete j.transactionId;
   delete j.qrHandshakes;
   delete j.handshakeLog;
+  // These contain geo-tagged on-site photos and dispute notes — only the two
+  // parties should see them, never a random browser of the job.
+  delete j.issueReports;
+  delete j.workProofPhotos;
+  delete j.completionRequest;
+  delete j.paymentConfirmedBy;
+  delete j.qrConfirmedBy;
   if (j.applications) {
     j.applications = j.applications.map(a => ({
       _id: a.id,
@@ -146,6 +153,16 @@ const createJobLimiter = rateLimit({
   max: 20,
   keyGenerator: (req, res) => req.userId || ipKeyGenerator(req, res),
   message: { error: 'You are posting jobs too quickly. Please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// Apply-spam guard (notification spam to posters).
+const applyLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 40,
+  keyGenerator: (req, res) => req.userId || ipKeyGenerator(req, res),
+  message: { error: 'You are applying too quickly. Please slow down.' },
   standardHeaders: true,
   legacyHeaders: false
 });
@@ -441,8 +458,8 @@ router.get('/:id', async (req, res) => {
       return res.json(toDTO(hideBlindReviews(obj, reqUserId)));
     }
 
+    // Non-party viewer: public DTO only (proof photos / issue reports stripped).
     const pub = toPublicJob(job, reqUserId);
-    pub.workProofPhotos = obj.workProofPhotos;
     pub.myApplication = myApplication;
     res.json(toDTO(pub));
   } catch (err) {
@@ -566,7 +583,7 @@ router.post('/', auth, createJobLimiter, upload.array('images', 10), async (req,
 });
 
 // ─── POST /api/jobs/:id/apply ───
-router.post('/:id/apply', auth, async (req, res) => {
+router.post('/:id/apply', auth, applyLimiter, async (req, res) => {
   try {
     if (!isId(req.params.id)) return res.status(404).json({ error: 'Job not found' });
     const { proposedAmount, proposedTime, message } = req.body;

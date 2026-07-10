@@ -30,9 +30,9 @@ function InvitePage() {
             // ignore
           }
         }
-        const healthRes = await fetch(`${API_URL}/api/health`);
-        const healthData = await healthRes.json();
-        if (healthData.stats) setStats(healthData.stats);
+        const statsRes = await fetch(`${API_URL}/api/stats/public`);
+        const stats = await statsRes.json();
+        if (stats) setStats(stats);
       } catch (err) {
         console.error('Error:', err);
       } finally {

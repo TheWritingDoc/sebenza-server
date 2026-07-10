@@ -57,10 +57,36 @@ async function connectDatabase() {
 }
 connectDatabase();
 
-// Security middleware
+// Security middleware. CSP is enabled with an allowlist matching what the SPA
+// actually loads (CRA inline runtime, Leaflet/qrcode CDNs, Google Fonts,
+// Supabase Storage images, same-origin socket.io). This limits where a stored
+// XSS could exfiltrate the localStorage JWT to.
+const SUPABASE_ORIGIN = (process.env.SUPABASE_URL || '').replace(/\/$/, '');
 app.use(helmet({
-  contentSecurityPolicy: false,
-  crossOriginEmbedderPolicy: false
+  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: {
+    useDefaults: true,
+    directives: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'self'"],
+      formAction: ["'self'"],
+      // CRA inlines the runtime chunk, so 'unsafe-inline' is required for scripts;
+      // CDN hosts cover Leaflet (unpkg) and qrcodejs (cdnjs).
+      scriptSrc: ["'self'", "'unsafe-inline'", 'https://unpkg.com', 'https://cdnjs.cloudflare.com'],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://unpkg.com'],
+      fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+      // Images: self, inline previews (data/blob), any https (OSM map tiles,
+      // Supabase Storage photos, avatars).
+      imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+      // Where the app may open connections: same-origin API + websockets, and
+      // Supabase (Storage). Tight enough to blunt token exfiltration.
+      connectSrc: ["'self'", 'wss:', SUPABASE_ORIGIN].filter(Boolean),
+      workerSrc: ["'self'", 'blob:'],
+      upgradeInsecureRequests: []
+    }
+  }
 }));
 
 // Rate limiting for auth endpoints
@@ -68,6 +94,21 @@ const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
   message: { error: 'Too many auth attempts, please try again later' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+// SMS-cost abuse guard for phone signup/login: cap requests PER PHONE NUMBER
+// (not just per IP) so one IP can't fan out real SMS to many numbers, and one
+// number can't be spammed with codes.
+const phoneStartLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5,
+  keyGenerator: (req) => {
+    const phone = String(req.body?.phone || '').replace(/[\s\-().]/g, '');
+    return phone || ipKeyGenerator(req);
+  },
+  message: { error: 'Too many code requests for this number. Please wait a while and try again.' },
   standardHeaders: true,
   legacyHeaders: false
 });
@@ -378,7 +419,7 @@ const normalizePhone = (p) => String(p || '').replace(/[\s\-().]/g, '');
 const genSmsCode = () => Math.floor(100000 + Math.random() * 900000).toString();
 
 // Step 1: request a code. Creates the account on first use (name required).
-app.post('/api/phone/start', authLimiter, async (req, res) => {
+app.post('/api/phone/start', phoneStartLimiter, async (req, res) => {
   try {
     const phone = normalizePhone(req.body.phone);
     const name = String(req.body.name || '').trim();
@@ -644,9 +685,10 @@ app.put('/api/users/status', auth, async (req, res) => {
 // Update user location
 app.put('/api/users/location', auth, async (req, res) => {
   try {
-    const { lat, lng } = req.body;
-    if (lat == null || lng == null) {
-      return res.status(400).json({ error: 'Latitude and longitude required' });
+    const lat = parseFloat(req.body.lat);
+    const lng = parseFloat(req.body.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return res.status(400).json({ error: 'Valid latitude (-90..90) and longitude (-180..180) required' });
     }
     await prisma.user.update({ where: { id: req.userId }, data: { lat, lng } });
     res.json({ message: 'Location updated', location: { lat, lng } });
@@ -657,23 +699,44 @@ app.put('/api/users/location', auth, async (req, res) => {
 });
 
 // Health check
+// Lightweight health check — a single cheap round-trip so uptime monitors
+// polling this don't burn pooler connections / DB CPU with COUNT(*) scans.
 app.get('/api/health', async (req, res) => {
+  let db = 'down';
+  if (dbConnected) {
+    try { await prisma.$queryRaw`SELECT 1`; db = 'up'; } catch (e) { db = 'error'; }
+  } else {
+    db = 'connecting';
+  }
   res.json({
-    status: 'ok',
+    status: db === 'up' ? 'ok' : 'degraded',
     mode: dbConnected ? 'POSTGRES' : 'CONNECTING',
-    features: ['auth', 'verification', 'sms', 'escrow', 'transactions', 'rand-conversion', 'image-upload'],
+    db,
     currency: {
       code: currency.CURRENCY_CODE,
       symbol: currency.CURRENCY_SYMBOL,
       creditToRandRate: currency.CREDIT_TO_RAND_RATE
     },
-    stats: {
-      users: dbConnected ? await prisma.user.count().catch(() => 0) : 0,
-      services: dbConnected ? await prisma.service.count().catch(() => 0) : 0,
-      transactions: dbConnected ? await prisma.transaction.count().catch(() => 0) : 0
-    },
     timestamp: new Date().toISOString()
   });
+});
+
+// Aggregate counts (moved off the health check). Cached lightly to avoid a DB
+// hit on every homepage load.
+let statsCache = { at: 0, data: null };
+app.get('/api/stats/public', async (req, res) => {
+  try {
+    if (!statsCache.data || Date.now() - statsCache.at > 60 * 1000) {
+      const [users, services] = await Promise.all([
+        prisma.user.count().catch(() => 0),
+        prisma.service.count().catch(() => 0)
+      ]);
+      statsCache = { at: Date.now(), data: { users, services } };
+    }
+    res.json(statsCache.data);
+  } catch (err) {
+    res.json({ users: 0, services: 0 });
+  }
 });
 
 // Public services endpoint (no auth required for homepage display)
@@ -1087,12 +1150,61 @@ async function sweepExpiredJobs() {
     console.error('Job sweep error:', err.message);
   }
 }
-setTimeout(sweepExpiredJobs, 30 * 1000);
-setInterval(sweepExpiredJobs, 15 * 60 * 1000);
+const sweepTimer = setTimeout(sweepExpiredJobs, 30 * 1000);
+const sweepInterval = setInterval(sweepExpiredJobs, 15 * 60 * 1000);
 
 httpServer.listen(PORT, () => {
   console.log('========================================');
   console.log('Sebenza Server running on port', PORT);
   console.log('Database: Postgres (Supabase) via Prisma');
   console.log('========================================');
+});
+
+// Slow-client / slowloris protection and clean connection recycling.
+httpServer.headersTimeout = 20 * 1000;   // must send headers within 20s
+httpServer.requestTimeout = 60 * 1000;   // whole request within 60s
+httpServer.keepAliveTimeout = 61 * 1000; // > Render's LB idle to avoid 502s
+
+// ── Graceful shutdown ──
+// Render sends SIGTERM on every deploy. Without this, in-flight requests and
+// DB writes are killed mid-flight. Drain connections, close sockets, then
+// disconnect Prisma before exiting.
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n${signal} received — shutting down gracefully…`);
+  clearTimeout(sweepTimer);
+  clearInterval(sweepInterval);
+
+  // Stop accepting new HTTP connections; close the socket.io server.
+  const forceExit = setTimeout(() => {
+    console.error('Forced shutdown after timeout');
+    process.exit(1);
+  }, 15 * 1000);
+
+  try {
+    io.close();
+    await new Promise((resolve) => httpServer.close(resolve));
+    await prisma.$disconnect();
+    clearTimeout(forceExit);
+    console.log('Clean shutdown complete');
+    process.exit(0);
+  } catch (err) {
+    console.error('Error during shutdown:', err.message);
+    process.exit(1);
+  }
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+// Last-resort safety nets. A crashed process is restarted by Render; the goal
+// here is to log the cause (so it's not silent) and exit cleanly rather than
+// leave the process in a half-dead state.
+process.on('unhandledRejection', (reason) => {
+  console.error('UNHANDLED REJECTION:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('UNCAUGHT EXCEPTION:', err);
+  shutdown('uncaughtException');
 });
