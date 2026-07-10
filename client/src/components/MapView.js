@@ -2,26 +2,14 @@ import React, { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { MapIcon, MapPin, Building2 } from './Icons';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
-// Load Leaflet from CDN once (avoids adding an npm dependency / version pins).
-let leafletPromise = null;
+// Leaflet is bundled (npm) so the map works in the native shell and offline.
 function loadLeaflet() {
-  if (window.L) return Promise.resolve(window.L);
-  if (leafletPromise) return leafletPromise;
-  leafletPromise = new Promise((resolve, reject) => {
-    const css = document.createElement('link');
-    css.rel = 'stylesheet';
-    css.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-    document.head.appendChild(css);
-    const js = document.createElement('script');
-    js.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    js.onload = () => resolve(window.L);
-    js.onerror = reject;
-    document.head.appendChild(js);
-  });
-  return leafletPromise;
+  return Promise.resolve(L);
 }
 
 const SA_DEFAULT = { lat: -30.5595, lng: 22.9375, zoom: 5 }; // whole country

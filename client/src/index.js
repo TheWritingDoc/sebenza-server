@@ -7,44 +7,14 @@ import { applyBrowserFixes } from './utils/browserCompat';
 // Apply browser-specific CSS fixes before render
 applyBrowserFixes();
 
-// Add ngrok-skip-browser-warning header to all fetch requests
-// This prevents ngrok's interstitial warning page from blocking API calls
-const originalFetch = window.fetch;
-window.fetch = function(...args) {
-  const [url, config = {}] = args;
-  config.headers = {
-    ...config.headers,
-    'ngrok-skip-browser-warning': 'true'
-  };
-  return originalFetch(url, config);
-};
-
-// Also add header to XMLHttpRequest for components that use it
-const originalXHROpen = XMLHttpRequest.prototype.open;
-XMLHttpRequest.prototype.open = function(method, url, ...rest) {
-  this.addEventListener('readystatechange', function() {
-    if (this.readyState === 1) { // OPENED
-      try { this.setRequestHeader('ngrok-skip-browser-warning', 'true'); } catch(e) {}
-    }
-  });
-  return originalXHROpen.call(this, method, url, ...rest);
-};
-
-// Disable service worker caching to prevent blank-screen stale bundle issues after deploys.
-// Also proactively unregister existing workers + stale caches once on load.
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', async () => {
-    try {
-      const regs = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map((r) => r.unregister()));
-      if (window.caches?.keys) {
-        const keys = await window.caches.keys();
-        await Promise.all(keys.map((k) => window.caches.delete(k)));
-      }
-      console.log('SW disabled and stale caches cleared');
-    } catch (err) {
-      console.log('SW cleanup failed:', err);
-    }
+// Register the service worker: network-first HTML (never a stale shell after
+// a deploy) + cache-first hashed assets (offline / metered-data friendly).
+// The SW itself deletes caches from old versions on activate.
+if ('serviceWorker' in navigator && !window.Capacitor) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/service-worker.js').catch((err) => {
+      console.log('SW registration failed:', err);
+    });
   });
 }
 
@@ -206,7 +176,7 @@ class RootErrorBoundary extends React.Component {
         <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', padding: 20 }}>
           <div style={{ maxWidth: 480, width: '100%', background: 'white', border: '1px solid #e2e8f0', borderRadius: 14, padding: 18 }}>
             <h2 style={{ margin: '0 0 8px', fontSize: 20 }}>We hit a display error</h2>
-            <p style={{ margin: 0, color: '#475569', fontSize: 14 }}>Please reload this screen. If it repeats, Jason will patch it immediately.</p>
+            <p style={{ margin: 0, color: '#475569', fontSize: 14 }}>Please reload this screen. If it keeps happening, close and reopen the app.</p>
             {this.state.message ? <p style={{ marginTop: 10, color: '#64748b', fontSize: 12 }}>Details: {this.state.message}</p> : null}
             <button onClick={() => window.location.reload()} style={{ marginTop: 14, background: '#0ea5e9', color: 'white', border: 'none', borderRadius: 10, padding: '10px 14px', fontWeight: 700, cursor: 'pointer' }}>
               Reload App

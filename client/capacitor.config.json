@@ -3,14 +3,10 @@
   "appName": "Sebenza",
   "webDir": "build",
   "server": {
-    "url": "https://sebenza-server.onrender.com",
     "androidScheme": "https",
     "iosScheme": "https",
     "allowNavigation": [
-      "sebenza-server.onrender.com",
-      "*.onrender.com",
-      "fonts.googleapis.com",
-      "fonts.gstatic.com"
+      "sebenza-server.onrender.com"
     ],
     "cleartext": false
   },

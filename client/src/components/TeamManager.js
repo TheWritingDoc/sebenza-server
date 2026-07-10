@@ -3,23 +3,9 @@ import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { TrustStars } from './TrustCenter';
 import { Users, QrCode, Camera, Building2 } from './Icons';
+import QRCodeLib from 'qrcode'; // bundled — works in the native shell / offline
 
 const API_URL = process.env.REACT_APP_API_URL || '';
-
-// Load the tiny qrcodejs lib from CDN once (same pattern as Leaflet in MapView).
-let qrLibPromise = null;
-function loadQrLib() {
-  if (window.QRCode) return Promise.resolve(window.QRCode);
-  if (qrLibPromise) return qrLibPromise;
-  qrLibPromise = new Promise((resolve, reject) => {
-    const js = document.createElement('script');
-    js.src = 'https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js';
-    js.onload = () => resolve(window.QRCode);
-    js.onerror = reject;
-    document.head.appendChild(js);
-  });
-  return qrLibPromise;
-}
 
 function TeamManager({ user }) {
   const navigate = useNavigate();
@@ -123,11 +109,12 @@ function TeamManager({ user }) {
     try {
       const res = await axios.post(`${API_URL}/api/teams/${team._id}/qr`, {}, H);
       setQr(res.data);
-      const QRCode = await loadQrLib();
-      setTimeout(() => {
+      setTimeout(async () => {
         if (qrBoxRef.current) {
           qrBoxRef.current.innerHTML = '';
-          new QRCode(qrBoxRef.current, { text: res.data.payload, width: 200, height: 200, correctLevel: QRCode.CorrectLevel.M });
+          const canvas = document.createElement('canvas');
+          await QRCodeLib.toCanvas(canvas, res.data.payload, { width: 200, errorCorrectionLevel: 'M', margin: 1 });
+          qrBoxRef.current.appendChild(canvas);
         }
       }, 50);
     } catch (err) { flash(err.response?.data?.error || 'Could not generate QR'); }

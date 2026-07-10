@@ -8,27 +8,12 @@ import useHardwareBackClose from './useHardwareBackClose';
 // hand-off button is kept as an option — but users navigate without ever
 // leaving Sebenza.
 
-const LEAFLET_CSS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
-const LEAFLET_JS = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
+// Leaflet is bundled (npm) so navigation works in the native shell and offline.
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
-let leafletLoading = null;
 function loadLeaflet() {
-  if (window.L) return Promise.resolve(window.L);
-  if (leafletLoading) return leafletLoading;
-  leafletLoading = new Promise((resolve, reject) => {
-    if (!document.querySelector(`link[href="${LEAFLET_CSS}"]`)) {
-      const css = document.createElement('link');
-      css.rel = 'stylesheet';
-      css.href = LEAFLET_CSS;
-      document.head.appendChild(css);
-    }
-    const s = document.createElement('script');
-    s.src = LEAFLET_JS;
-    s.onload = () => resolve(window.L);
-    s.onerror = () => { leafletLoading = null; reject(new Error('Leaflet failed to load')); };
-    document.head.appendChild(s);
-  });
-  return leafletLoading;
+  return Promise.resolve(L);
 }
 
 function distanceKm(a, b) {

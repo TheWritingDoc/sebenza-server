@@ -84,18 +84,20 @@ Legend: **P0** = do not launch without · **P1** = before real money / any scale
 
 ## P1 — Client / mobile
 
-- [ ] **Capacitor loads a remote URL** (`capacitor.config.json:6` → Render). Cold start =
-  long white splash; offline = blank; Play policy gray area ("webview of a website").
-  **Fix:** ship the local `build/` bundle in `webDir`; point only API calls at the server.
-- [ ] **Remove ngrok fetch/XHR monkey-patch** (client index.js:12-31) — adds
-  `ngrok-skip-browser-warning` to *every* request incl. third-party → needless CORS
-  preflights. Dev residue.
-- [ ] **Bundle Leaflet + qrcodejs** instead of CDN loads (TeamManager.js:16, MapView) —
-  they're not in the Capacitor `allowNavigation` allowlist, so they break in the native
-  shell / offline. `qrcode` is already an npm dep.
-- [ ] **Real SW or accept no-PWA.** Client index.js:35 unregisters all SWs + nukes caches
-  every load → no offline, re-downloads bundle on metered data each visit. Ship a
-  network-first-html / cache-first-hashed-assets SW, or drop the PWA claim.
+- [x] **DONE** Capacitor ships the local `build/` bundle (`server.url` removed) —
+  instant cold start, no white splash, no "webview of a website" policy risk. API +
+  socket calls repointed at the server in native via `shared/apiBase.js` (axios
+  interceptor rewrites relative `/api` URLs; sockets use `SOCKET_ORIGIN`).
+- [x] **DONE** ngrok fetch/XHR monkey-patch removed (client index.js). Verified:
+  `window.fetch` unpatched in build.
+- [x] **DONE** Leaflet bundled from npm (MapView + NavigationMap) and team QR switched
+  to the already-bundled `qrcode` package — no CDN scripts at runtime. Verified: map
+  renders tiles + markers with zero external scripts. Server CSP tightened (unpkg/cdnjs
+  removed from scriptSrc/styleSrc).
+- [x] **DONE** Real service worker (`public/service-worker.js`): network-first HTML
+  (deploys picked up next load — no stale shell), cache-first hashed `/static/` assets,
+  old caches dropped on activate. Skipped in the native shell. Verified: registered +
+  activated in browser.
 
 ## P1 — CI / process
 
@@ -109,7 +111,7 @@ Legend: **P0** = do not launch without · **P1** = before real money / any scale
 ## P2 — Fast-follow (polish, not blocking)
 
 - [ ] Remove dev-only error copy shown to users: "use localhost:3001…" (JobBoard.js:953,
-  1024) and "Jason will patch it" (client index.js:209).
+  1024). ~~"Jason will patch it"~~ (done — index.js copy replaced).
 - [ ] Replace `alert()` calls with the existing toast (JobBoard.js ×3, PostJobModal.js).
 - [ ] Purge remaining `gshop`/`Ge-Shop` residue + `console.log` noise (12 in JobBoard.js).
 - [ ] iOS `apple-touch-icon` is an SVG (index.html:15) → iOS ignores it; add a 192px PNG;

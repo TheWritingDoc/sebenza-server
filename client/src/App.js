@@ -9,6 +9,7 @@ import InvitePage from './components/InvitePage';
 import NotificationSystem from './components/NotificationSystem';
 import './index.css';
 import './shared/axiosSetup'; // global JWT header + 401 → /login interceptor
+import { SOCKET_ORIGIN } from './shared/apiBase';
 import { Home as HomeIcon, Briefcase, ClipboardList, UserCircle, Plus, Bell } from './components/Icons';
 import useHardwareBackClose from './shared/useHardwareBackClose';
 
@@ -152,7 +153,7 @@ function App() {
     // Connect (or reconnect) with authenticated token
     if (!socket || !socket.connected) {
       const token = localStorage.getItem('token') || sessionStorage.getItem('token') || '';
-      socket = io(API_URL || window.location.origin, {
+      socket = io(SOCKET_ORIGIN, {
         transports: ['websocket', 'polling'],
         auth: { token }
       });

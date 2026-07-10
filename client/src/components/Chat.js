@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
+import { SOCKET_ORIGIN } from '../shared/apiBase';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -23,7 +24,7 @@ function Chat({ transactionId, otherUser, onClose }) {
   useEffect(() => {
     fetchMessages();
 
-    const newSocket = io(API_URL || window.location.origin, {
+    const newSocket = io(SOCKET_ORIGIN, {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionAttempts: 5,

@@ -72,10 +72,10 @@ app.use(helmet({
       objectSrc: ["'none'"],
       frameAncestors: ["'self'"],
       formAction: ["'self'"],
-      // CRA inlines the runtime chunk, so 'unsafe-inline' is required for scripts;
-      // CDN hosts cover Leaflet (unpkg) and qrcodejs (cdnjs).
-      scriptSrc: ["'self'", "'unsafe-inline'", 'https://unpkg.com', 'https://cdnjs.cloudflare.com'],
-      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com', 'https://unpkg.com'],
+      // CRA inlines the runtime chunk, so 'unsafe-inline' is required for
+      // scripts. Leaflet + qrcode are bundled now — no CDN script hosts.
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
       fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
       // Images: self, inline previews (data/blob), any https (OSM map tiles,
       // Supabase Storage photos, avatars).
