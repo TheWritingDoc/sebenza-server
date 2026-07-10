@@ -3,7 +3,7 @@ services:
     name: sebenza-server
     runtime: node
     plan: free
-    buildCommand: npm install
+    buildCommand: npm install && npx prisma migrate deploy
     startCommand: node index.js
     envVars:
       - key: DATABASE_URL

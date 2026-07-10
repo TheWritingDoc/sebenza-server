@@ -74,8 +74,11 @@ Legend: **P0** = do not launch without · **P1** = before real money / any scale
   lower risk — images go to a public read-only bucket, not executed.)*
 - [ ] **Error tracking + structured logging (owner: needs a Sentry account).** Add
   Sentry (free) + pino/morgan with request IDs — prod 500s are otherwise invisible.
-- [ ] **Prisma migrations baseline.** Only `schema.prisma` exists (schema applied via MCP
-  SQL) → drift risk. `prisma migrate diff` to baseline, adopt `prisma migrate deploy`.
+- [x] **DONE** Prisma migrations baseline. `prisma/migrations/0_init` captures the live
+  DB exactly (15 tables, 29 indexes, 29 FKs), marked applied via `migrate resolve`.
+  `schema.prisma` aligned to the DB (index/FK names, `onUpdate: NoAction`, DECIMAL types,
+  JSON defaults) → **zero drift** (`migrate diff` = empty migration). Render build now runs
+  `prisma migrate deploy`; CI has a drift guard (migrations must reproduce the schema).
 - [ ] **Backups (owner: plan decision).** Supabase free tier has limited backup/no PITR —
   schedule `pg_dump` (GH Action/Render cron) or upgrade the plan.
 

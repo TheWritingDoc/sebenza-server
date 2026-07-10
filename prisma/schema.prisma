@@ -41,7 +41,7 @@ model User {
   paidProfileViews               Json      @default("[]") @map("paid_profile_views")
   portfolioImages                Json      @default("[]") @map("portfolio_images")
   skills                         String[]  @default([])
-  communityStats                 Json      @map("community_stats")
+  communityStats                 Json      @default("{\"disputeRate\": 0, \"jobsCompleted\": 0, \"jobsRequested\": 0, \"completionRate\": 100, \"impatientFlags\": 0, \"complainerScore\": 0, \"givenRatingsAvg\": 0, \"timeWasterFlags\": 0, \"cancellationRate\": 0, \"reliabilityScore\": 100, \"providerLateFlags\": 0, \"totalGivenReviews\": 0, \"receivedRatingsAvg\": 0, \"totalReceivedReviews\": 0}") @map("community_stats")
   flags                          Json      @default("[]")
   savedServices                  Json      @default("[]") @map("saved_services")
   recommendationsSent            Json      @default("[]") @map("recommendations_sent")
@@ -67,9 +67,9 @@ model User {
   trustLevel                     String    @default("New Neighbour") @map("trust_level")
   createdAt                      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  referredBy        User?            @relation("Referrals", fields: [referredById], references: [id])
+  referredBy        User?            @relation("Referrals", fields: [referredById], references: [id], onDelete: NoAction, onUpdate: NoAction)
   referrals         User[]           @relation("Referrals")
-  team              Team?            @relation("TeamMembership", fields: [teamId], references: [id], onDelete: SetNull)
+  team              Team?            @relation("TeamMembership", fields: [teamId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "users_team_fk")
   teamsSupervised   Team[]           @relation("TeamSupervisor")
   teamMemberRows    TeamMember[]
   trustDocs         TrustDoc[]
@@ -89,8 +89,8 @@ model User {
   smsVerifications  SmsVerification[]
   verifications     Verification[]
 
-  @@index([role, primaryCategory])
-  @@index([isOnline, lastActive(sort: Desc)])
+  @@index([role, primaryCategory], map: "users_role_category_idx")
+  @@index([isOnline, lastActive(sort: Desc)], map: "users_online_idx")
   @@map("users")
 }
 
@@ -103,9 +103,9 @@ model TrustDoc {
   status     String   @default("pending")
   uploadedAt DateTime @default(now()) @map("uploaded_at") @db.Timestamptz(6)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@index([userId])
+  @@index([userId], map: "trust_docs_user_idx")
   @@map("trust_docs")
 }
 
@@ -117,9 +117,9 @@ model WorkExperience {
   years   String   @default("")
   addedAt DateTime @default(now()) @map("added_at") @db.Timestamptz(6)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@index([userId])
+  @@index([userId], map: "work_experience_user_idx")
   @@map("work_experience")
 }
 
@@ -129,8 +129,8 @@ model Endorsement {
   endorserId String   @map("endorser_id") @db.Uuid
   createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  user     User @relation("Endorsee", fields: [userId], references: [id], onDelete: Cascade)
-  endorser User @relation("Endorser", fields: [endorserId], references: [id], onDelete: Cascade)
+  user     User @relation("Endorsee", fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  endorser User @relation("Endorser", fields: [endorserId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([userId, endorserId])
   @@map("endorsements")
@@ -149,11 +149,11 @@ model Team {
   qrExpiresAt  DateTime? @map("qr_expires_at") @db.Timestamptz(6)
   createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  supervisor User         @relation("TeamSupervisor", fields: [supervisorId], references: [id])
+  supervisor User         @relation("TeamSupervisor", fields: [supervisorId], references: [id], onDelete: NoAction, onUpdate: NoAction)
   members    TeamMember[]
   usersIn    User[]       @relation("TeamMembership")
 
-  @@index([supervisorId])
+  @@index([supervisorId], map: "teams_supervisor_idx")
   @@map("teams")
 }
 
@@ -171,11 +171,11 @@ model TeamMember {
   qrConfirmedAt DateTime? @map("qr_confirmed_at") @db.Timestamptz(6)
   confirmedRole String    @default("") @map("confirmed_role")
 
-  team Team  @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  user User? @relation(fields: [userId], references: [id])
+  team Team  @relation(fields: [teamId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  user User? @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction)
 
-  @@index([teamId])
-  @@index([userId])
+  @@index([teamId], map: "team_members_team_idx")
+  @@index([userId], map: "team_members_user_idx")
   @@map("team_members")
 }
 
@@ -200,15 +200,15 @@ model Service {
   completedJobsCount Int      @default(0) @map("completed_jobs_count")
   averageRating     Decimal   @default(0) @map("average_rating") @db.Decimal(4, 2)
   totalReviews      Int       @default(0) @map("total_reviews")
-  ratingBreakdown   Json      @map("rating_breakdown")
+  ratingBreakdown   Json      @default("{\"1\": 0, \"2\": 0, \"3\": 0, \"4\": 0, \"5\": 0}") @map("rating_breakdown")
   createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  provider     User          @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  provider     User          @relation(fields: [providerId], references: [id], onDelete: Cascade, onUpdate: NoAction)
   transactions Transaction[]
   reviews      Review[]
 
-  @@index([providerId, available, createdAt(sort: Desc)])
-  @@index([category, available])
+  @@index([providerId, available, createdAt(sort: Desc)], map: "services_provider_idx")
+  @@index([category, available], map: "services_category_idx")
   @@map("services")
 }
 
@@ -238,17 +238,17 @@ model Transaction {
   partialReleasedBy    String?   @map("partial_released_by") @db.Uuid
   createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  requester User     @relation("Requester", fields: [requesterId], references: [id])
-  provider  User     @relation("Provider", fields: [providerId], references: [id])
-  service   Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull)
-  job       Job?     @relation("TransactionJob", fields: [jobId], references: [id], onDelete: SetNull)
+  requester User     @relation("Requester", fields: [requesterId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  provider  User     @relation("Provider", fields: [providerId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  service   Service? @relation(fields: [serviceId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  job       Job?     @relation("TransactionJob", fields: [jobId], references: [id], onDelete: SetNull, onUpdate: NoAction, map: "transactions_job_fk")
   jobsUsing Job[]    @relation("JobTransaction")
   messages  Message[]
   reviews   Review[]
 
-  @@index([requesterId, status, createdAt(sort: Desc)])
-  @@index([providerId, status, createdAt(sort: Desc)])
-  @@index([jobId])
+  @@index([requesterId, status, createdAt(sort: Desc)], map: "transactions_requester_idx")
+  @@index([providerId, status, createdAt(sort: Desc)], map: "transactions_provider_idx")
+  @@index([jobId], map: "transactions_job_idx")
   @@map("transactions")
 }
 
@@ -294,28 +294,28 @@ model Job {
   partialEscrowReleased       Boolean   @default(false) @map("partial_escrow_released")
   partialEscrowAmount         Decimal   @default(0) @map("partial_escrow_amount") @db.Decimal(12, 2)
   partialEscrowReleasedAt     DateTime? @map("partial_escrow_released_at") @db.Timestamptz(6)
-  paymentWaitTimeMinutes      Float?    @map("payment_wait_time_minutes")
+  paymentWaitTimeMinutes      Decimal?  @map("payment_wait_time_minutes") @db.Decimal
   issueReports                Json      @default("[]") @map("issue_reports")
   stoppedAt                   DateTime? @map("stopped_at") @db.Timestamptz(6)
   stoppedBy                   String?   @map("stopped_by") @db.Uuid
   helperCompletedAt           DateTime? @map("helper_completed_at") @db.Timestamptz(6)
   posterConfirmedAt           DateTime? @map("poster_confirmed_at") @db.Timestamptz(6)
-  helperCompletionDurationMinutes Float? @map("helper_completion_duration_minutes")
-  posterConfirmationDurationMinutes Float? @map("poster_confirmation_duration_minutes")
+  helperCompletionDurationMinutes Decimal? @map("helper_completion_duration_minutes") @db.Decimal
+  posterConfirmationDurationMinutes Decimal? @map("poster_confirmation_duration_minutes") @db.Decimal
   manualStartAllowedByPoster  Boolean   @default(false) @map("manual_start_allowed_by_poster")
   manualStartPermissionAt     DateTime? @map("manual_start_permission_at") @db.Timestamptz(6)
   manualStartPermissionBy     String?   @map("manual_start_permission_by") @db.Uuid
   createdAt                   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  poster       User          @relation(fields: [posterId], references: [id])
-  transaction  Transaction?  @relation("JobTransaction", fields: [transactionId], references: [id], onDelete: SetNull)
+  poster       User          @relation(fields: [posterId], references: [id], onDelete: NoAction, onUpdate: NoAction)
+  transaction  Transaction?  @relation("JobTransaction", fields: [transactionId], references: [id], onDelete: SetNull, onUpdate: NoAction)
   transactions Transaction[] @relation("TransactionJob")
   applications Application[]
   reviews      Review[]
 
-  @@index([posterId, status, createdAt(sort: Desc)])
-  @@index([status, category, createdAt(sort: Desc)])
-  @@index([transactionId])
+  @@index([posterId, status, createdAt(sort: Desc)], map: "jobs_poster_idx")
+  @@index([status, category, createdAt(sort: Desc)], map: "jobs_browse_idx")
+  @@index([transactionId], map: "jobs_transaction_idx")
   @@map("jobs")
 }
 
@@ -338,11 +338,11 @@ model Application {
   pingLog            Json      @default("[]") @map("ping_log")
   createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  job       Job  @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  applicant User @relation(fields: [applicantId], references: [id], onDelete: Cascade)
+  job       Job  @relation(fields: [jobId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  applicant User @relation(fields: [applicantId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
   @@unique([jobId, applicantId])
-  @@index([applicantId, status])
+  @@index([applicantId, status], map: "applications_applicant_idx")
   @@map("applications")
 }
 
@@ -362,16 +362,16 @@ model Review {
   moderationReason String?   @map("moderation_reason")
   createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull)
-  job         Job?         @relation(fields: [jobId], references: [id], onDelete: SetNull)
-  reviewer    User         @relation("Reviewer", fields: [reviewerId], references: [id], onDelete: Cascade)
-  reviewee    User         @relation("Reviewee", fields: [revieweeId], references: [id], onDelete: Cascade)
-  service     Service?     @relation(fields: [serviceId], references: [id], onDelete: SetNull)
+  transaction Transaction? @relation(fields: [transactionId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  job         Job?         @relation(fields: [jobId], references: [id], onDelete: SetNull, onUpdate: NoAction)
+  reviewer    User         @relation("Reviewer", fields: [reviewerId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  reviewee    User         @relation("Reviewee", fields: [revieweeId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  service     Service?     @relation(fields: [serviceId], references: [id], onDelete: SetNull, onUpdate: NoAction)
 
-  @@index([revieweeId, createdAt(sort: Desc)])
-  @@index([reviewerId, createdAt(sort: Desc)])
-  @@index([serviceId, createdAt(sort: Desc)])
-  @@index([transactionId])
+  @@index([revieweeId, createdAt(sort: Desc)], map: "reviews_reviewee_idx")
+  @@index([reviewerId, createdAt(sort: Desc)], map: "reviews_reviewer_idx")
+  @@index([serviceId, createdAt(sort: Desc)], map: "reviews_service_idx")
+  @@index([transactionId], map: "reviews_transaction_idx")
   @@map("reviews")
 }
 
@@ -386,11 +386,11 @@ model Message {
   read          Boolean  @default(false)
   createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
-  sender      User        @relation("Sender", fields: [senderId], references: [id], onDelete: Cascade)
-  receiver    User        @relation("Receiver", fields: [receiverId], references: [id], onDelete: Cascade)
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  sender      User        @relation("Sender", fields: [senderId], references: [id], onDelete: Cascade, onUpdate: NoAction)
+  receiver    User        @relation("Receiver", fields: [receiverId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@index([transactionId, createdAt])
+  @@index([transactionId, createdAt], map: "messages_transaction_idx")
   @@map("messages")
 }
 
@@ -406,10 +406,10 @@ model Notification {
   clicked   Boolean  @default(false)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@index([userId, createdAt(sort: Desc)])
-  @@index([jobId])
+  @@index([userId, createdAt(sort: Desc)], map: "notifications_user_idx")
+  @@index([jobId], map: "notifications_job_idx")
   @@map("notifications")
 }
 
@@ -422,9 +422,9 @@ model SmsVerification {
   expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
   createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@index([userId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)], map: "sms_verifications_user_idx")
   @@map("sms_verifications")
 }
 
@@ -439,8 +439,8 @@ model Verification {
   verifiedAt  DateTime? @map("verified_at") @db.Timestamptz(6)
   submittedAt DateTime  @default(now()) @map("submitted_at") @db.Timestamptz(6)
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: NoAction)
 
-  @@index([userId])
+  @@index([userId], map: "verifications_user_idx")
   @@map("verifications")
 }
