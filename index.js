@@ -254,7 +254,8 @@ function authUserPayload(user) {
     referralCount: user.referralCount,
     accountType: user.accountType || 'individual',
     businessName: user.businessName || '',
-    teamSize: user.teamSize || 1
+    teamSize: user.teamSize || 1,
+    role: user.role || 'client'
   };
 }
 
@@ -470,10 +471,11 @@ app.post('/api/phone/start', phoneStartLimiter, async (req, res) => {
     }
     const twilio = require('twilio');
     const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_TOKEN);
+    const { toE164ZA } = require('./utils/phone');
     await client.messages.create({
       body: 'Your Sebenza sign-in code is: ' + code,
       from: process.env.TWILIO_PHONE,
-      to: phone
+      to: toE164ZA(phone)
     });
     res.json({ message: 'Verification code sent', newUser });
   } catch (err) {
@@ -689,6 +691,10 @@ app.get('/api/health', async (req, res) => {
   } else {
     db = 'connecting';
   }
+  const providers = {
+    sms: !!(process.env.TWILIO_SID && process.env.TWILIO_TOKEN && process.env.TWILIO_PHONE),
+    email: !!((process.env.EMAIL_HOST && process.env.EMAIL_USER && process.env.EMAIL_PASS) || process.env.SENDGRID_API_KEY),
+  };
   res.json({
     status: db === 'up' ? 'ok' : 'degraded',
     mode: dbConnected ? 'POSTGRES' : 'CONNECTING',
@@ -698,7 +704,8 @@ app.get('/api/health', async (req, res) => {
       symbol: currency.CURRENCY_SYMBOL,
       creditToRandRate: currency.CREDIT_TO_RAND_RATE
     },
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    providers,
   });
 });
 

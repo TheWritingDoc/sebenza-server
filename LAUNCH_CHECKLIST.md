@@ -28,11 +28,19 @@ Legend: **P0** = do not launch without · **P1** = before real money / any scale
   session → /login. Verified in build.
 - [x] **DONE (ec850af)** Safe localStorage parse on boot (App.js `safeParse`, Chat.js).
 - [x] **DONE** `npm audit fix` → 0 vulnerabilities (was 5 high). Verified.
-- [ ] **⚠️ REQUIRED — set provider creds in Render before launch:** `TWILIO_SID/TOKEN/PHONE`
-  (real SMS) + `EMAIL_HOST/USER/PASS` + `EMAIL_FROM` (real mail). **Because of the OTP
-  gate above, phone signup and email verification now return 503 in production until
-  these are set.** Email+password login still works. Confirm `JWT_SECRET` is strong,
-  `NODE_ENV=production`, `CORS_ORIGINS` locked to real origins.
+- [ ] **⚠️ REQUIRED — set provider creds in Render before launch** (code side is DONE:
+  SA numbers auto-convert to E.164 for Twilio; `/api/health` now reports
+  `providers: {sms, email}` so you can confirm the config took). Steps:
+  1. **SMS**: twilio.com → get SID + Auth Token + buy a number → set
+     `TWILIO_SID`, `TWILIO_TOKEN`, `TWILIO_PHONE` (e.g. `+27...`) in Render → Environment.
+  2. **Email** (pick one): SendGrid → `SENDGRID_API_KEY` + `EMAIL_FROM`;
+     or Gmail → enable 2FA, create an App Password, set `EMAIL_HOST=smtp.gmail.com`,
+     `EMAIL_USER=<gmail>`, `EMAIL_PASS=<app password>`, `EMAIL_FROM`.
+  3. Redeploy, then check `https://sebenza-server.onrender.com/api/health` shows
+     `"providers":{"sms":true,"email":true}`.
+  Until set, phone signup + email codes return 503 in prod (by design — the OTP gate).
+  Email+password login still works. Confirm `JWT_SECRET` strong, `NODE_ENV=production`,
+  `CORS_ORIGINS` locked.
 
 ## P0 — Legal / store (cannot ship without)
 
@@ -131,8 +139,12 @@ Legend: **P0** = do not launch without · **P1** = before real money / any scale
   and the in-process 15-min interval still covers awake time.
 - [ ] Consider Render Starter (no cold starts) once there's traffic.
 - [ ] Split the 4,761-line `JobBoard.js` monolith (maintenance/chunk-size hazard).
-- [ ] Report-user flow + admin review screen to actually set the scam/complaint flags the
-  community-star engine reads (currently only dispute tracking feeds them).
+- [x] **DONE** Report-user flow + admin review screen. `POST /users/:id/report`
+  (6 reason categories, 5/day limit, one open report per pair), admin queue at `/admin`
+  (role-gated): dismiss / dismiss-frivolous (reporter complainerScore +15) / warn /
+  flag-suspicious (−1★ FLAGGED) / flag-scammer (+ all sessions revoked), plus
+  `clear-flags` redemption (restores stars, shows "redeemed"). Verified end-to-end.
+  **Owner: promote your real account with SQL** `update users set role='admin' where email='<you>'`.
 
 ---
 

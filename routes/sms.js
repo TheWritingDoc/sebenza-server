@@ -76,10 +76,11 @@ router.post(['/send', '/send-code'], auth, smsSendLimiter, async (req, res) => {
       // Real Twilio integration would go here
       const twilio = require('twilio');
       const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_TOKEN);
+      const { toE164ZA } = require('../utils/phone');
       await client.messages.create({
         body: 'Your Sebenza verification code is: ' + code,
         from: process.env.TWILIO_PHONE,
-        to: phone
+        to: toE164ZA(phone)
       });
       res.json({ message: 'Verification code sent' });
     }

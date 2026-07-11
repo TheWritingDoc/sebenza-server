@@ -3,6 +3,7 @@ import axios from 'axios';
 import { useParams, useNavigate } from 'react-router-dom';
 import { TrustStars, BehaviourBadges } from './TrustCenter';
 import { Briefcase, Wrench, ThumbsUp, CheckCircle2 } from './Icons';
+import ReportUserModal from './ReportUserModal';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -21,6 +22,7 @@ function PublicProfile() {
   const [endorsing, setEndorsing] = useState(false);
   const [verifiedWork, setVerifiedWork] = useState([]);
   const [photoView, setPhotoView] = useState(null);
+  const [reporting, setReporting] = useState(false);
   const token = localStorage.getItem('token');
 
   useEffect(() => {
@@ -199,8 +201,20 @@ function PublicProfile() {
               {rec.count} neighbour{rec.count === 1 ? '' : 's'} vouch for {profile.name?.split(' ')[0]}
             </div>
           )}
+          {token && (
+            <div style={{ marginTop: 10 }}>
+              <button onClick={() => setReporting(true)} style={{
+                border: 'none', background: 'transparent', color: '#94a3b8', fontSize: 12,
+                cursor: 'pointer', textDecoration: 'underline', minHeight: 44, padding: '4px 8px',
+              }}>⚑ Report this user</button>
+            </div>
+          )}
         </div>
       </div>
+
+      {reporting && (
+        <ReportUserModal userId={id} userName={profile.name} onClose={() => setReporting(false)} />
+      )}
 
       {/* Verified work — only jobs completed and proven through the app */}
       {verifiedWork.length > 0 && (

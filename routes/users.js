@@ -22,6 +22,7 @@ const perUserLimiter = (max, windowMs = 60 * 60 * 1000) => rateLimit({
 const docUploadLimiter = perUserLimiter(20);
 const endorseLimiter = perUserLimiter(60);
 const emailCodeLimiter = perUserLimiter(5, 15 * 60 * 1000);
+const reportLimiter = perUserLimiter(5, 24 * 60 * 60 * 1000); // 5 reports/day
 
 const optionalAuth = (req, res, next) => {
   const token = req.headers.authorization?.split(' ')[1];
@@ -451,6 +452,47 @@ router.get('/businesses', async (req, res) => {
       }))));
   } catch (err) {
     console.error('Businesses map error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// ===== REPORT A USER =====
+// Community safety: report scams, harassment, no-shows. Reports go to the
+// admin review queue; only an admin decision sets the flags that affect
+// community stars (prevents report-bombing).
+const REPORT_REASONS = ['scam', 'harassment', 'no_show', 'poor_work', 'spam', 'other'];
+router.post('/:id/report', auth, reportLimiter, async (req, res) => {
+  try {
+    const targetId = req.params.id;
+    if (!isId(targetId)) return res.status(404).json({ error: 'User not found' });
+    if (String(targetId) === String(req.user.userId)) {
+      return res.status(400).json({ error: 'You cannot report yourself' });
+    }
+    const reason = String(req.body.reason || '');
+    if (!REPORT_REASONS.includes(reason)) {
+      return res.status(400).json({ error: 'Invalid reason' });
+    }
+    const details = String(req.body.details || '').slice(0, 1000);
+    const jobId = isId(req.body.jobId) ? req.body.jobId : null;
+
+    const target = await prisma.user.findUnique({ where: { id: targetId }, select: { id: true } });
+    if (!target) return res.status(404).json({ error: 'User not found' });
+
+    // One open report per reporter/reported pair — no stacking.
+    const existing = await prisma.report.findFirst({
+      where: { reporterId: req.user.userId, reportedId: targetId, status: 'pending' },
+      select: { id: true }
+    });
+    if (existing) {
+      return res.status(409).json({ error: 'You already have a report about this user under review' });
+    }
+
+    const report = await prisma.report.create({
+      data: { reporterId: req.user.userId, reportedId: targetId, jobId, reason, details }
+    });
+    res.status(201).json({ message: 'Report submitted. Our team will review it.', reportId: report.id });
+  } catch (err) {
+    console.error('Report user error:', err.message);
     res.status(500).json({ error: 'Server error' });
   }
 });
