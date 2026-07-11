@@ -4,26 +4,7 @@ const { prisma } = require('../db');
 const { toDTO, sanitizeUser, isId } = require('../utils/dto');
 const jwt = require('jsonwebtoken');
 
-const auth = (req, res, next) => {
-  const authHeader = req.headers.authorization || '';
-  const token = authHeader.split(' ')[1];
-  if (!token || token === 'null' || token === 'undefined') {
-    return res.status(401).json({ error: 'No token provided' });
-  }
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.userId = decoded.userId;
-    next();
-  } catch (err) {
-    if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Token expired', code: 'TOKEN_EXPIRED' });
-    }
-    if (err.name === 'JsonWebTokenError') {
-      return res.status(401).json({ error: 'Invalid token', code: 'TOKEN_INVALID' });
-    }
-    res.status(401).json({ error: 'Invalid token' });
-  }
-};
+const { auth } = require('../middleware/authToken');
 
 // Helper: calculate user community stats
 async function recalculateUserStats(userId) {

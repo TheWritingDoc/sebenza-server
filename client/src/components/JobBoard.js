@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import formatRand from '../shared/formatRand';
 import axios from 'axios';
 import { useNavigate, useSearchParams, useParams, useLocation } from 'react-router-dom';
 import { socket } from '../App';
@@ -243,7 +244,6 @@ function JobBoard({ user, onViewPortfolio }) {
     if (code === 'TOKEN_EXPIRED' || msg === 'Token expired' || code === 'TOKEN_INVALID' || msg === 'Invalid token') {
       localStorage.removeItem('token');
       localStorage.removeItem('sebenza_user');
-      localStorage.removeItem('gshop_user');
       navigate('/login');
       return true;
     }
@@ -587,9 +587,8 @@ function JobBoard({ user, onViewPortfolio }) {
     // ── Socket event handlers ──
     const onPartialEscrowReleasedGlobal = async (data) => {
       if (data.amount) {
-        const message = `💰 R${data.amount} (${data.percentage}%) released from escrow!`;
+        const message = `💰 ${formatRand(data.amount)} (${data.percentage}%) released from escrow!`;
         showMsg(message);
-        console.log(`[Client] Partial escrow released: ${message}`);
         
         // Silent refresh with error handling
         try {
@@ -608,7 +607,6 @@ function JobBoard({ user, onViewPortfolio }) {
             });
             if (res.data) {
               setViewingJob(res.data);
-              console.log(`[Client] Viewing job refreshed after partial release: ${data.jobId}`);
             }
           } catch (e) {
             console.error(`[Client] Failed to refresh viewing job after partial release:`, e);
@@ -665,7 +663,6 @@ function JobBoard({ user, onViewPortfolio }) {
             setWorkHubOpen(false);
             setWorkHubTab('overview');
             if (window.location.pathname.startsWith('/jobs/workhub/')) navigate('/jobs', { replace: true });
-            console.log(`[Client] Payment confirmed for job ${data.jobId}, showing completion summary`);
           }
         } catch (e) {
           console.error(`[Client] Failed to fetch completion summary:`, e);
@@ -673,7 +670,6 @@ function JobBoard({ user, onViewPortfolio }) {
         }
       } else {
         // Directed scan in progress — don't close modal, just refresh data silently
-        console.log(`[Client] Directed scan in progress for job ${data.jobId}`);
         await silentRefresh(data.jobId);
       }
     };
@@ -724,20 +720,16 @@ function JobBoard({ user, onViewPortfolio }) {
     const reconnectDelay = 1000; // 1 second
 
     const handleConnect = () => {
-      console.log('[Client] Socket connected');
       reconnectAttempts = 0; // Reset on successful connection
     };
 
     const handleDisconnect = (reason) => {
-      console.log('[Client] Socket disconnected:', reason);
       
       // Attempt reconnection if disconnected unexpectedly
       if (reason === 'io server disconnect') {
-        console.log('[Client] Server disconnected, attempting reconnection...');
         socket.connect();
       } else if (reconnectAttempts < maxReconnectAttempts) {
         setTimeout(() => {
-          console.log(`[Client] Reconnecting... Attempt ${reconnectAttempts + 1}/${maxReconnectAttempts}`);
           socket.connect();
           reconnectAttempts++;
         }, reconnectDelay * Math.pow(2, reconnectAttempts)); // Exponential backoff
@@ -745,11 +737,9 @@ function JobBoard({ user, onViewPortfolio }) {
     };
 
     const handleReconnect = (attemptNumber) => {
-      console.log(`[Client] Reconnected after ${attemptNumber} attempts`);
       
       // Re-emit any pending acknowledgments for critical events
       if (pendingAcknowledgments.size > 0) {
-        console.log(`[Client] Resending ${pendingAcknowledgments.size} pending acknowledgments`);
         pendingAcknowledgments.forEach((ackData, jobId) => {
           socket.emit('ack', ackData);
         });
@@ -758,7 +748,6 @@ function JobBoard({ user, onViewPortfolio }) {
     };
 
     const handleReconnectAttempt = (attemptNumber) => {
-      console.log(`[Client] Reconnection attempt ${attemptNumber}`);
     };
 
     // Set up connection event listeners
@@ -801,7 +790,6 @@ function JobBoard({ user, onViewPortfolio }) {
   useEffect(() => {
     if (!socket || !isLoggedIn) return;
 
-    console.log('[Client] Initializing socket connection monitoring');
     return () => {
       // Clean up any pending acknowledgments
       setPendingAcknowledgments(new Map());
@@ -950,15 +938,7 @@ function JobBoard({ user, onViewPortfolio }) {
     } catch (err) {
       const isHtmlError = err.message?.includes('DOCTYPE') || err.message?.includes('doctype') || err.message?.includes('<!');
       if (isHtmlError) {
-        const serverUrl = window.location.origin.includes('localhost:3000')
-          ? 'http://localhost:3001'
-          : window.location.origin;
-        throw new Error(
-          `Server returned HTML instead of JSON. ` +
-          `You are probably on the wrong port. ` +
-          `Please use ${serverUrl} (not localhost:3000). ` +
-          `If on mobile, set REACT_APP_API_URL to your server IP.`
-        );
+        throw new Error('Could not reach the server. Please check your connection and try again.');
       }
       throw err;
     }
@@ -1021,14 +1001,7 @@ function JobBoard({ user, onViewPortfolio }) {
     } catch (err) {
       const isHtmlError = err.message?.includes('DOCTYPE') || err.message?.includes('doctype') || err.message?.includes('<!');
       if (isHtmlError) {
-        const serverUrl = window.location.origin.includes('localhost:3000')
-          ? 'http://localhost:3001'
-          : window.location.origin;
-        throw new Error(
-          `Server returned HTML instead of JSON. ` +
-          `Please use ${serverUrl} (not localhost:3000). ` +
-          `If on mobile, set REACT_APP_API_URL to your server IP.`
-        );
+        throw new Error('Could not reach the server. Please check your connection and try again.');
       }
       throw err;
     }
@@ -1220,7 +1193,7 @@ function JobBoard({ user, onViewPortfolio }) {
       const res = await axios.post(`${API_URL}/api/jobs/${jobId}/applications/${appId}/accept-offer`, {}, { headers: { Authorization: `Bearer ${token}` } });
       const needsConfirm = res.data?.nextStep === 'confirm';
       showMsg(needsConfirm
-        ? `✅ Deal agreed${res.data?.agreedAmount ? ` at R${res.data.agreedAmount}` : ''}! One more step: confirm to lock it in.`
+        ? `✅ Deal agreed${res.data?.agreedAmount ? ` at ${formatRand(res.data.agreedAmount)}` : ''}! One more step: confirm to lock it in.`
         : '✅ You accepted the offer. The other user has been notified and must now confirm to lock this job assignment.');
       setWorkflowAlert(needsConfirm ? {
         type: 'accepted',
@@ -1850,13 +1823,13 @@ function JobBoard({ user, onViewPortfolio }) {
               const effectivePrice = acceptedApp?.approvedAmount || acceptedApp?.proposedAmount || job.budget;
               const isNegotiated = acceptedApp?.approvedAmount && acceptedApp.approvedAmount !== job.budget;
               const budgetRange = job.budgetMin && job.budgetMax && job.budgetMin !== job.budgetMax
-                ? `R${job.budgetMin} – R${job.budgetMax}`
-                : `R${effectivePrice}`;
+                ? `${formatRand(job.budgetMin)} – ${formatRand(job.budgetMax)}`
+                : formatRand(effectivePrice);
               return (
                 <span style={{ fontSize: 16, fontWeight: 800, color: '#6366f1' }}>
                   {budgetRange}
                   {isNegotiated && (
-                    <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, textDecoration: 'line-through', marginLeft: 6 }}>was R{job.budget}</span>
+                    <span style={{ fontSize: 11, color: '#94a3b8', fontWeight: 600, textDecoration: 'line-through', marginLeft: 6 }}>was {formatRand(job.budget)}</span>
                   )}
                 </span>
               );
@@ -2229,9 +2202,9 @@ function JobBoard({ user, onViewPortfolio }) {
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
                 <div style={{ flex: 1, minWidth: 200 }}>
                   <div style={{ fontSize: 13, fontWeight: 700, color: '#1e293b' }}>
-                    Your offer: <span style={{ fontSize: 24, fontWeight: 900, color: '#4338ca', letterSpacing: -0.3 }}>R{job.myApplication?.proposedAmount}</span>
+                    Your offer: <span style={{ fontSize: 24, fontWeight: 900, color: '#4338ca', letterSpacing: -0.3 }}>{formatRand(job.myApplication?.proposedAmount)}</span>
                     {job.myApplication?.status === 'approved' && job.myApplication?.approvedAmount && job.myApplication.approvedAmount !== job.myApplication.proposedAmount && (
-                      <span style={{ color: '#16a34a', marginLeft: 8, fontSize: 20, fontWeight: 900 }}>→ Final R{job.myApplication.approvedAmount}</span>
+                      <span style={{ color: '#16a34a', marginLeft: 8, fontSize: 20, fontWeight: 900 }}>→ Final {formatRand(job.myApplication.approvedAmount)}</span>
                     )}
                   </div>
                   <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 2 }}>{job.myApplication?.message?.slice(0, 60)}{job.myApplication?.message?.length > 60 ? '...' : ''}</div>
@@ -2281,20 +2254,20 @@ function JobBoard({ user, onViewPortfolio }) {
                       <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', marginBottom: 10, flexWrap: 'wrap' }}>
                         <div style={{ flex: '1 1 120px', background: '#f8fafc', borderRadius: 14, padding: '12px 14px', textAlign: 'center', border: '1px solid #e2e8f0' }}>
                           <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Previous</div>
-                          <div style={{ fontSize: 22, fontWeight: 800, color: '#475569', marginTop: 4 }}>R{prevAmount}</div>
+                          <div style={{ fontSize: 22, fontWeight: 800, color: '#475569', marginTop: 4 }}>{formatRand(prevAmount)}</div>
                         </div>
                         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 28 }}>
                           <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#fef3c7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, color: '#b45309' }}>→</div>
                         </div>
                         <div style={{ flex: '1 1 120px', background: '#ffffff', borderRadius: 14, padding: '12px 14px', textAlign: 'center', border: '2px solid #fde68a' }}>
                           <div style={{ fontSize: 11, fontWeight: 700, color: '#b45309', textTransform: 'uppercase', letterSpacing: 0.5 }}>New Offer</div>
-                          <div style={{ fontSize: 34, fontWeight: 900, color: '#111827', marginTop: 4, letterSpacing: -0.4 }}>R{newAmount}</div>
+                          <div style={{ fontSize: 34, fontWeight: 900, color: '#111827', marginTop: 4, letterSpacing: -0.4 }}>{formatRand(newAmount)}</div>
                         </div>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
                         <div style={{ fontSize: 12, fontWeight: 700, color: diffColor, background: diffBg, padding: '6px 14px', borderRadius: 20, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                           <span>{diffArrow}</span>
-                          <span>R{Math.abs(diff)} {isHigher ? 'more' : isLower ? 'less' : 'no change'}</span>
+                          <span>{formatRand(Math.abs(diff))} {isHigher ? 'more' : isLower ? 'less' : 'no change'}</span>
                         </div>
                       </div>
                       {/* Time comparison */}
@@ -2390,7 +2363,7 @@ function JobBoard({ user, onViewPortfolio }) {
                   {job.myApplication?.approvedAmount && (
                     <div style={{ background: '#ecfdf3', border: '2px solid #86efac', borderRadius: 14, padding: '10px 12px', textAlign: 'center' }}>
                       <div style={{ fontSize: 11, fontWeight: 800, color: '#166534', textTransform: 'uppercase', letterSpacing: 0.6 }}>Final Confirm Price</div>
-                      <div style={{ fontSize: 32, fontWeight: 900, color: '#14532d', lineHeight: 1.05 }}>R{job.myApplication.approvedAmount}</div>
+                      <div style={{ fontSize: 32, fontWeight: 900, color: '#14532d', lineHeight: 1.05 }}>{formatRand(job.myApplication.approvedAmount)}</div>
                     </div>
                   )}
                   <div style={{ fontSize: 11, color: '#1d4ed8', fontWeight: 600, textAlign: 'center' }}>
@@ -3415,7 +3388,7 @@ function JobBoard({ user, onViewPortfolio }) {
                 return (
                   <div style={{ marginBottom: 14, background: 'white', border: '1px solid #e2e8f0', borderRadius: 16, padding: '12px 14px', display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
                     <span style={{ fontSize: 22 }}>{categoryEmojis[viewingJob.category] || '✨'}</span>
-                    <span style={{ background: '#eef2ff', color: '#4338ca', fontSize: 16, fontWeight: 900, padding: '5px 12px', borderRadius: 12 }}>R{agreed}</span>
+                    <span style={{ background: '#eef2ff', color: '#4338ca', fontSize: 16, fontWeight: 900, padding: '5px 12px', borderRadius: 12 }}>{formatRand(agreed)}</span>
                     <span style={{ background: viewingJob.paymentMethod === 'escrow' ? '#eef2ff' : '#f0fdf4', color: viewingJob.paymentMethod === 'escrow' ? '#4338ca' : '#166534', fontSize: 12, fontWeight: 700, padding: '5px 10px', borderRadius: 999 }}>
                       {viewingJob.paymentMethod === 'escrow' ? '🔒 Escrow' : '💵 Cash'}
                     </span>
@@ -3435,8 +3408,8 @@ function JobBoard({ user, onViewPortfolio }) {
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
                   <span style={{ background: '#eef2ff', color: '#4338ca', fontSize: 20, fontWeight: 900, padding: '6px 12px', borderRadius: 12 }}>
                     {viewingJob.budgetMin && viewingJob.budgetMax && viewingJob.budgetMin !== viewingJob.budgetMax
-                      ? `R${viewingJob.budgetMin} – R${viewingJob.budgetMax}`
-                      : `R${viewingJob.budget}`}
+                      ? `${formatRand(viewingJob.budgetMin)} – ${formatRand(viewingJob.budgetMax)}`
+                      : formatRand(viewingJob.budget)}
                   </span>
                   {viewingJob.isUrgent && <span style={{ background: '#ef4444', color: 'white', fontSize: 11, fontWeight: 800, padding: '5px 10px', borderRadius: 999 }}>URGENT</span>}
                   {viewingJob.estimatedDuration && <span style={{ background: '#f1f5f9', color: '#475569', fontSize: 11, fontWeight: 700, padding: '5px 10px', borderRadius: 999 }}>{viewingJob.estimatedDuration}</span>}
@@ -3545,8 +3518,8 @@ function JobBoard({ user, onViewPortfolio }) {
                   <div style={{ fontSize: 10, color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>Budget</div>
                   <div style={{ fontSize: 18, fontWeight: 800, color: '#6366f1' }}>
                     {viewingJob.budgetMin && viewingJob.budgetMax && viewingJob.budgetMin !== viewingJob.budgetMax
-                      ? `R${viewingJob.budgetMin} – R${viewingJob.budgetMax}`
-                      : `R${viewingJob.budget}`}
+                      ? `${formatRand(viewingJob.budgetMin)} – ${formatRand(viewingJob.budgetMax)}`
+                      : formatRand(viewingJob.budget)}
                   </div>
                   {(viewingJob.budgetMin && viewingJob.budgetMax && viewingJob.budgetMin !== viewingJob.budgetMax) && (
                     <div style={{ fontSize: 10, color: '#6366f1', fontWeight: 600, marginTop: 2 }}>Price negotiable</div>
@@ -3619,8 +3592,8 @@ function JobBoard({ user, onViewPortfolio }) {
                 <div style={{ fontSize: 10, color: '#94a3b8', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>Budget</div>
                 <div style={{ fontSize: 18, fontWeight: 800, color: '#6366f1' }}>
                   {viewingJob.budgetMin && viewingJob.budgetMax && viewingJob.budgetMin !== viewingJob.budgetMax
-                    ? `R${viewingJob.budgetMin} – R${viewingJob.budgetMax}`
-                    : `R${viewingJob.budget}`}
+                    ? `${formatRand(viewingJob.budgetMin)} – ${formatRand(viewingJob.budgetMax)}`
+                    : formatRand(viewingJob.budget)}
                 </div>
               </div>
               <div style={{ background: 'white', borderRadius: 14, padding: '12px 12px', border: '1px solid #e2e8f0' }}>
@@ -3715,7 +3688,7 @@ function JobBoard({ user, onViewPortfolio }) {
                               <div style={{ fontSize: 10, fontWeight: 800, textTransform: 'uppercase', color: statusColor, background: statusBg, borderRadius: 999, padding: '3px 8px' }}>{statusLabel}</div>
                             </div>
                             <div style={{ fontSize: 12, fontWeight: 700, color: '#1e293b', marginTop: 4 }}>
-                              Offered <span style={{ color: '#22c55e' }}>R{entry.amount}</span>
+                              Offered <span style={{ color: '#22c55e' }}>{formatRand(entry.amount)}</span>
                             </div>
                             {entry.proposedTime && <div style={{ fontSize: 11, color: '#64748b' }}>Proposed time: {new Date(entry.proposedTime).toLocaleString()}</div>}
                             {entry.message && <div style={{ fontSize: 12, color: '#475569', marginTop: 4 }}>{entry.message}</div>}
@@ -3994,7 +3967,7 @@ function JobBoard({ user, onViewPortfolio }) {
                       <div style={{ width: '100%', fontSize: 11, color: '#1d4ed8', fontWeight: 600, textAlign: 'center' }}>
                         📅 {viewingJob.myApplication?.approvedTime ? new Date(viewingJob.myApplication.approvedTime).toLocaleString() : 'Scheduled'}
                         {viewingJob.myApplication?.approvedAmount && (
-                          <span style={{ color: '#22c55e', marginLeft: 4 }}>• R{viewingJob.myApplication.approvedAmount}</span>
+                          <span style={{ color: '#22c55e', marginLeft: 4 }}>• {formatRand(viewingJob.myApplication.approvedAmount)}</span>
                         )}
                       </div>
                       <button type="button" onClick={() => handleConfirmApproval(viewingJob._id, viewingJob.myApplication?._id)} disabled={confirmingApproval === viewingJob._id} style={{
@@ -4034,20 +4007,20 @@ function JobBoard({ user, onViewPortfolio }) {
                           <div style={{ display: 'flex', gap: 8, alignItems: 'stretch', marginBottom: 10, flexWrap: 'wrap' }}>
                             <div style={{ flex: '1 1 120px', background: '#f8fafc', borderRadius: 14, padding: '12px 14px', textAlign: 'center', border: '1px solid #e2e8f0' }}>
                               <div style={{ fontSize: 11, fontWeight: 700, color: '#64748b', textTransform: 'uppercase', letterSpacing: 0.5 }}>Previous</div>
-                              <div style={{ fontSize: 22, fontWeight: 800, color: '#475569', marginTop: 4 }}>R{prevAmount}</div>
+                              <div style={{ fontSize: 22, fontWeight: 800, color: '#475569', marginTop: 4 }}>{formatRand(prevAmount)}</div>
                             </div>
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 28 }}>
                               <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#fef3c7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, color: '#b45309' }}>→</div>
                             </div>
                             <div style={{ flex: '1 1 120px', background: '#ffffff', borderRadius: 14, padding: '12px 14px', textAlign: 'center', border: '2px solid #fde68a' }}>
                               <div style={{ fontSize: 11, fontWeight: 700, color: '#b45309', textTransform: 'uppercase', letterSpacing: 0.5 }}>New Offer</div>
-                              <div style={{ fontSize: 26, fontWeight: 800, color: '#1e293b', marginTop: 4 }}>R{newAmount}</div>
+                              <div style={{ fontSize: 26, fontWeight: 800, color: '#1e293b', marginTop: 4 }}>{formatRand(newAmount)}</div>
                             </div>
                           </div>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 10 }}>
                             <div style={{ fontSize: 12, fontWeight: 700, color: diffColor, background: diffBg, padding: '6px 14px', borderRadius: 20, display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                               <span>{diffArrow}</span>
-                              <span>R{Math.abs(diff)} {isHigher ? 'more' : isLower ? 'less' : 'no change'}</span>
+                              <span>{formatRand(Math.abs(diff))} {isHigher ? 'more' : isLower ? 'less' : 'no change'}</span>
                             </div>
                           </div>
                           <div style={{ background: '#f8fafc', borderRadius: 10, padding: '8px 12px', marginBottom: 10, border: '1px solid #e2e8f0' }}>
@@ -4148,23 +4121,23 @@ function JobBoard({ user, onViewPortfolio }) {
                     <button
                       type="button"
                       onClick={async () => {
-                        if (!window.confirm(`Release 50% of escrow (R${Math.round((viewingJob.budget || viewingJob.negotiatedAmount || 0) * 0.5)}) to the provider now?\n\nThe remaining 50% stays secured until job completion.`)) return;
+                        if (!window.confirm(`Release 50% of escrow (${formatRand(Math.round((viewingJob.budget || viewingJob.negotiatedAmount || 0) * 0.5))}) to the provider now?\n\nThe remaining 50% stays secured until job completion.`)) return;
                         try {
                           const token = localStorage.getItem('token');
                           const res = await fetch(`${API_URL}/api/jobs/${viewingJob._id}/partial-release`, {
                             method: 'POST',
-                            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', 'ngrok-skip-browser-warning': 'true' },
+                            headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' },
                             body: JSON.stringify({ percentage: 50 })
                           });
                           const data = await res.json();
                           if (res.ok) {
-                            alert(`R${data.partialReleaseAmount} released to provider! Remaining escrow: R${data.remainingEscrow}`);
+                            showMsg(`${formatRand(data.partialReleaseAmount)} released to provider! Remaining escrow: ${formatRand(data.remainingEscrow)}`);
                             if (typeof fetchJobs === 'function') fetchJobs();
                           } else {
-                            alert(data.error || 'Failed to release partial escrow');
+                            showMsg(data.error || 'Failed to release partial escrow');
                           }
                         } catch (err) {
-                          alert('Network error: ' + err.message);
+                          showMsg('Network error: ' + err.message);
                         }
                       }}
                       style={{
@@ -4178,14 +4151,14 @@ function JobBoard({ user, onViewPortfolio }) {
                   )}
                   {(viewingJob.posterId?._id?.toString?.() === userId || viewingJob.posterId?.toString?.() === userId) && viewingJob.paymentMethod === 'escrow' && viewingJob.partialEscrowReleased && (
                     <div style={{ background: '#f0fdf4', borderRadius: 12, padding: 10, border: '1px solid #bbf7d0', fontSize: 12, fontWeight: 600, color: '#166534' }}>
-                      ✅ 50% escrow (R{viewingJob.partialEscrowAmount || Math.round((viewingJob.budget || 0) * 0.5)}) released to provider. Remaining held until completion.
+                      ✅ 50% escrow ({formatRand(viewingJob.partialEscrowAmount || Math.round((viewingJob.budget || 0) * 0.5))}) released to provider. Remaining held until completion.
                     </div>
                   )}
                   {(viewingJob.posterId?._id?.toString?.() !== userId && viewingJob.posterId?.toString?.() !== userId) && viewingJob.paymentMethod === 'escrow' && viewingJob.partialEscrowReleased && (
                     <div style={{ background: 'linear-gradient(135deg, #eff6ff, #dbeafe)', borderRadius: 12, padding: 12, border: '1px solid #93c5fd' }}>
                       <div style={{ fontSize: 13, fontWeight: 700, color: '#1e40af' }}>💰 50% Escrow Released to You</div>
                       <div style={{ fontSize: 12, color: '#3b82f6', marginTop: 4 }}>
-                        R{viewingJob.partialEscrowAmount || Math.round((viewingJob.budget || 0) * 0.5)} has been transferred to your account. The remaining 50% will be released when the job is completed.
+                        {formatRand(viewingJob.partialEscrowAmount || Math.round((viewingJob.budget || 0) * 0.5))} has been transferred to your account. The remaining 50% will be released when the job is completed.
                       </div>
                     </div>
                   )}

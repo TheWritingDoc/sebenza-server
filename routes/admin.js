@@ -5,26 +5,7 @@ const { prisma } = require('../db');
 const { toDTO, sanitizeUser, isId } = require('../utils/dto');
 
 // Reusable JWT auth middleware
-const auth = (req, res, next) => {
-  const authHeader = req.headers.authorization || '';
-  const token = authHeader.split(' ')[1];
-  if (!token || token === 'null' || token === 'undefined') {
-    return res.status(401).json({ error: 'No token provided' });
-  }
-  try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.userId = decoded.userId;
-    next();
-  } catch (err) {
-    if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Token expired', code: 'TOKEN_EXPIRED' });
-    }
-    if (err.name === 'JsonWebTokenError') {
-      return res.status(401).json({ error: 'Invalid token', code: 'TOKEN_INVALID' });
-    }
-    res.status(401).json({ error: 'Invalid token' });
-  }
-};
+const { auth, revokeUserSessions } = require('../middleware/authToken');
 
 const requireAdmin = async (req, res, next) => {
   try {
@@ -48,6 +29,19 @@ router.get('/status', auth, requireAdmin, async (req, res) => {
     const users = await prisma.user.count();
     res.json({ status: 'ok', users });
   } catch (err) {
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// Revoke every outstanding JWT for a user (lockout/offboarding). Their 30-day
+// tokens die within 60s (version-cache TTL) on all devices.
+router.post('/users/:id/revoke-sessions', auth, requireAdmin, async (req, res) => {
+  try {
+    if (!isId(req.params.id)) return res.status(400).json({ error: 'Invalid user id' });
+    await revokeUserSessions(req.params.id);
+    res.json({ message: 'All sessions revoked' });
+  } catch (err) {
+    if (err.code === 'P2025') return res.status(404).json({ error: 'User not found' });
     res.status(500).json({ error: 'Server error' });
   }
 });

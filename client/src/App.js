@@ -108,7 +108,7 @@ function App() {
   const [isMobile, setIsMobile] = useState(window.innerWidth < 640);
 
   useEffect(() => {
-    const storedUser = safeParse('sebenza_user') || safeParse('gshop_user');
+    const storedUser = safeParse('sebenza_user');
     if (storedUser) setUser(storedUser);
     setLoading(false);
   }, []);
@@ -189,14 +189,12 @@ function App() {
   const handleLogin = (userData) => {
     setUser(userData);
     localStorage.setItem('sebenza_user', JSON.stringify(userData));
-    localStorage.removeItem('gshop_user');
   };
 
   const handleLogout = () => {
     if (socket) { socket.disconnect(); socket = null; }
     setUser(null);
     localStorage.removeItem('sebenza_user');
-    localStorage.removeItem('gshop_user');
     localStorage.removeItem('token');
     window.location.href = '/';
   };

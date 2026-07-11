@@ -57,6 +57,7 @@ model User {
   professionalServiceTCAcceptedAt DateTime? @map("professional_service_tc_accepted_at") @db.Timestamptz(6)
   termsAcceptedAt                DateTime? @map("terms_accepted_at") @db.Timestamptz(6)
   termsVersion                   String    @default("") @map("terms_version")
+  tokenVersion                   Int       @default(0) @map("token_version")
   accountType                    String    @default("individual") @map("account_type")
   businessName                   String    @default("") @map("business_name")
   teamSize                       Int       @default(1) @map("team_size")

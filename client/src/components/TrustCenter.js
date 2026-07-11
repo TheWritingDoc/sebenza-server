@@ -424,7 +424,7 @@ function EmailStep({ onDone }) {
 }
 
 function PhoneStep({ user, onDone }) {
-  const stored = (() => { try { return JSON.parse(localStorage.getItem('sebenza_user') || localStorage.getItem('gshop_user') || '{}'); } catch { return {}; } })();
+  const stored = (() => { try { return JSON.parse(localStorage.getItem('sebenza_user') || '{}'); } catch { return {}; } })();
   const [phone, setPhone] = useState(stored.phone || user?.phone || '');
   const [confirmed, setConfirmed] = useState(!!(stored.phone || user?.phone));
 
@@ -473,7 +473,6 @@ function TrustCenter({ user, setUser }) {
       const updated = { ...user, phoneVerified: true };
       setUser(updated);
       localStorage.setItem('sebenza_user', JSON.stringify(updated));
-      localStorage.removeItem('gshop_user');
     }
     closeStep();
   };

@@ -45,7 +45,6 @@ axios.interceptors.response.use(
       try {
         localStorage.removeItem('token');
         localStorage.removeItem('sebenza_user');
-        localStorage.removeItem('gshop_user');
       } catch (e) { /* ignore */ }
       const here = window.location.pathname;
       if (here !== '/login' && here !== '/' && here !== '/register') {

@@ -75,8 +75,8 @@ app.use(helmet({
       // CRA inlines the runtime chunk, so 'unsafe-inline' is required for
       // scripts. Leaflet + qrcode are bundled now — no CDN script hosts.
       scriptSrc: ["'self'", "'unsafe-inline'"],
-      styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
-      fontSrc: ["'self'", 'https://fonts.gstatic.com', 'data:'],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      fontSrc: ["'self'", 'data:'],
       // Images: self, inline previews (data/blob), any https (OSM map tiles,
       // Supabase Storage photos, avatars).
       imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
@@ -220,27 +220,8 @@ app.use(`${API_VERSION}/jobs`, jobRoutes);
 app.use(`${API_VERSION}/notifications`, notificationRoutes);
 app.use(`${API_VERSION}/admin`, adminRoutes);
 
-// JWT Middleware
-const auth = (req, res, next) => {
-  const authHeader = req.headers.authorization || '';
-  const token = authHeader.split(' ')[1];
-  if (!token || token === 'null' || token === 'undefined') {
-    return res.status(401).json({ error: 'No token provided' });
-  }
-  try {
-    const decoded = jwt.verify(token, effectiveJwtSecret);
-    req.userId = decoded.userId;
-    next();
-  } catch (err) {
-    if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Token expired', code: 'TOKEN_EXPIRED' });
-    }
-    if (err.name === 'JsonWebTokenError') {
-      return res.status(401).json({ error: 'Invalid token', code: 'TOKEN_INVALID' });
-    }
-    res.status(401).json({ error: 'Invalid token' });
-  }
-};
+// JWT auth (shared, with token-version revocation)
+const { auth, currentTokenVersion } = require('./middleware/authToken');
 
 // Helper: generate unique referral code
 function generateReferralCode(name) {
@@ -351,7 +332,7 @@ app.post('/api/register', authLimiter, [
       }
     });
 
-    const token = jwt.sign({ userId: user.id }, effectiveJwtSecret, { expiresIn: '30d' });
+    const token = jwt.sign({ userId: user.id, tv: user.tokenVersion || 0 }, effectiveJwtSecret, { expiresIn: '30d' });
     res.json({ token, user: authUserPayload(user) });
   } catch (err) {
     console.error('Register error:', err);
@@ -403,7 +384,7 @@ app.post('/api/login', authLimiter, [
       data: { lastLoginAt: new Date(), loginAttempts: 0 }
     });
 
-    const token = jwt.sign({ userId: user.id }, effectiveJwtSecret, { expiresIn: '30d' });
+    const token = jwt.sign({ userId: user.id, tv: user.tokenVersion || 0 }, effectiveJwtSecret, { expiresIn: '30d' });
     res.json({ token, user: authUserPayload(user) });
   } catch (err) {
     console.error('Login error:', err);
@@ -529,7 +510,7 @@ app.post('/api/phone/verify', authLimiter, async (req, res) => {
       await refreshTrust(prisma, user.id);
     } catch (e) { console.error('Trust refresh (phone login) failed:', e.message); }
 
-    const token = jwt.sign({ userId: user.id }, effectiveJwtSecret, { expiresIn: '30d' });
+    const token = jwt.sign({ userId: user.id, tv: user.tokenVersion || 0 }, effectiveJwtSecret, { expiresIn: '30d' });
     res.json({ token, user: authUserPayload(fresh) });
   } catch (err) {
     console.error('Phone verify error:', err);
@@ -784,6 +765,18 @@ app.get('/api/v1/health', (req, res) => {
   });
 });
 
+// External cron (GitHub Actions) hits this every 15 min — it both sweeps and
+// wakes a sleeping free-tier instance, so expiries can't be missed while
+// asleep. Guarded by CRON_SECRET; disabled if the secret isn't set.
+app.post('/api/internal/sweep', async (req, res) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || req.headers['x-cron-secret'] !== secret) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  await sweepExpiredJobs();
+  res.json({ ok: true });
+});
+
 // Fallback for any unmatched API routes — return JSON 404 instead of HTML
 app.use('/api', (req, res) => {
   res.status(404).json({ error: 'API endpoint not found', path: req.path, method: req.method });
@@ -828,13 +821,17 @@ const io = new Server(httpServer, {
 });
 
 // Authenticate Socket.IO connections using the same JWT as the HTTP API
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   try {
     const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(' ')[1];
     if (!token || token === 'null' || token === 'undefined') {
       return next(new Error('Authentication required'));
     }
     const decoded = jwt.verify(token, effectiveJwtSecret);
+    const v = await currentTokenVersion(decoded.userId).catch(() => (decoded.tv || 0));
+    if (v === null || (decoded.tv || 0) !== v) {
+      return next(new Error('Session revoked'));
+    }
     socket.userId = String(decoded.userId);
     next();
   } catch (err) {

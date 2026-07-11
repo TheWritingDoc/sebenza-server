@@ -16,7 +16,7 @@ function Chat({ transactionId, otherUser, onClose }) {
   const messagesEndRef = useRef(null);
   const token = localStorage.getItem('token');
   const currentUser = (() => {
-    try { return JSON.parse(localStorage.getItem('sebenza_user') || localStorage.getItem('gshop_user') || '{}'); }
+    try { return JSON.parse(localStorage.getItem('sebenza_user') || '{}'); }
     catch (e) { return {}; }
   })();
   const currentUserId = String(currentUser.id || currentUser._id || '');

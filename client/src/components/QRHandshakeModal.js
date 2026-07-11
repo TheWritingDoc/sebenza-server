@@ -492,7 +492,7 @@ function QRHandshakeModal({ jobId, userId, isPoster, onClose, onScanned, handsha
     if (!decodedText || scannerRef.current == null || scannedRef.current || submitting) return;
 
     const parts = decodedText.split('|');
-    if (parts.length < 3 || (parts[0] !== 'sebenza-handshake' && parts[0] !== 'gshop-handshake')) {
+    if (parts.length < 3 || parts[0] !== 'sebenza-handshake') {
       setScanError('Invalid QR code. Please scan the correct handshake QR.');
       return;
     }

@@ -52,8 +52,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Content-hashed assets: cache-first.
-  if (url.pathname.startsWith('/static/')) {
+  // Content-hashed assets + self-hosted fonts: cache-first.
+  if (url.pathname.startsWith('/static/') || url.pathname.startsWith('/fonts/')) {
     event.respondWith(
       caches.match(req).then((hit) => {
         if (hit) return hit;

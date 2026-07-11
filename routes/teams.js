@@ -6,19 +6,7 @@ const { toDTO, sanitizeUser, isId } = require('../utils/dto');
 const { sendNotification } = require('../utils/notifications');
 const { CODE_TTL_MS, genTeamCode, buildQrPayload, parseQrPayload, isCodeValid } = require('../utils/teamQr');
 
-const auth = (req, res, next) => {
-  const token = (req.headers.authorization || '').split(' ')[1];
-  if (!token || token === 'null' || token === 'undefined') {
-    return res.status(401).json({ error: 'No token provided' });
-  }
-  try {
-    req.userId = jwt.verify(token, process.env.JWT_SECRET).userId;
-    next();
-  } catch (err) {
-    if (err.name === 'TokenExpiredError') return res.status(401).json({ error: 'Token expired', code: 'TOKEN_EXPIRED' });
-    return res.status(401).json({ error: 'Invalid token', code: 'TOKEN_INVALID' });
-  }
-};
+const { auth } = require('../middleware/authToken');
 
 function notify(req, userId, payload) {
   const io = req.app.get('io');

@@ -182,7 +182,7 @@ function PostJobModal({ user, onClose, onPosted }) {
 
   const handleImageChange = async (e) => {
     const files = Array.from(e.target.files);
-    if (files.length + images.length > 5) { alert('Maximum 5 photos allowed'); return; }
+    if (files.length + images.length > 5) { setError('Maximum 5 photos allowed'); return; }
     setLoading(true);
     try {
       const compressed = await compressImages(files, 1200, 0.85);

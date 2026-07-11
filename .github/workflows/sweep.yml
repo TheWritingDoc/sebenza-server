@@ -1,0 +1,23 @@
+name: Job sweep (cron)
+
+# Fires the expired-job sweep every 15 minutes. Doubles as a keep-warm ping:
+# it wakes the free-tier Render instance, so jobs expire on time even while
+# the in-process interval is asleep. Requires the CRON_SECRET repo secret to
+# match the CRON_SECRET env var on Render.
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger sweep
+        run: |
+          code=$(curl -s -o /tmp/body -w "%{http_code}" -X POST \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            --max-time 120 \
+            https://sebenza-server.onrender.com/api/internal/sweep)
+          echo "HTTP $code: $(cat /tmp/body)"
+          test "$code" = "200"

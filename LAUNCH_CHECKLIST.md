@@ -110,18 +110,25 @@ Legend: **P0** = do not launch without · **P1** = before real money / any scale
 
 ## P2 — Fast-follow (polish, not blocking)
 
-- [ ] Remove dev-only error copy shown to users: "use localhost:3001…" (JobBoard.js:953,
-  1024). ~~"Jason will patch it"~~ (done — index.js copy replaced).
-- [ ] Replace `alert()` calls with the existing toast (JobBoard.js ×3, PostJobModal.js).
-- [ ] Purge remaining `gshop`/`Ge-Shop` residue + `console.log` noise (12 in JobBoard.js).
-- [ ] iOS `apple-touch-icon` is an SVG (index.html:15) → iOS ignores it; add a 192px PNG;
-  add a maskable PNG to the manifest.
-- [ ] Self-host Inter font (render-blocking Google Fonts, fails offline/native).
-- [ ] Shared `formatRand()` helper (thousands separators; currently ad-hoc `R{amount}`).
-- [ ] 30-day JWT with no revocation — consider shorter TTL + refresh, or a token-version
-  claim so locked/removed users lose access before expiry.
-- [ ] Move `sweepExpiredJobs` off in-process cron (misses while free instance sleeps;
-  double-notifies if scaled >1 instance) → Supabase scheduled function / Render cron.
+- [x] **DONE** Dev-only error copy removed (JobBoard "wrong port" messages, "Jason will
+  patch it" boundary copy).
+- [x] **DONE** `alert()` → in-app toast (JobBoard ×3 `showMsg`, PostJobModal `setError`).
+- [x] **DONE** `gshop`/Ge-Shop residue purged (storage keys, QR prefix) + all 12
+  `console.log`s stripped from JobBoard.
+- [x] **DONE** `apple-touch-icon` → 192px PNG; manifest icons carry proper `purpose`
+  (512px marked maskable).
+- [x] **DONE** Inter self-hosted (variable woff2 in `/fonts`, preloaded, SW-cached) —
+  Google Fonts removed from index.html **and** from the CSP.
+- [x] **DONE** Shared `formatRand()` (en-US grouping) adopted across JobBoard amount
+  displays.
+- [x] **DONE** JWT revocation via `tv` (token-version) claim — shared
+  `middleware/authToken.js` (replaces 12 duplicated auth copies), 60s cached DB check,
+  socket auth included, `POST /api/admin/users/:id/revoke-sessions`. Verified: revoked
+  token → 401 "Session revoked". Migration `add_token_version`.
+- [x] **DONE** External sweep trigger: `POST /api/internal/sweep` (CRON_SECRET-guarded)
+  + GH Actions cron every 15 min (also wakes the sleeping free instance). **Owner: set
+  `CRON_SECRET` on Render + as a GitHub repo secret** — until then the workflow no-ops
+  and the in-process 15-min interval still covers awake time.
 - [ ] Consider Render Starter (no cold starts) once there's traffic.
 - [ ] Split the 4,761-line `JobBoard.js` monolith (maintenance/chunk-size hazard).
 - [ ] Report-user flow + admin review screen to actually set the scam/complaint flags the

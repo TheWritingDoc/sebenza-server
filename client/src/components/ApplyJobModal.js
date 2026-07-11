@@ -42,7 +42,6 @@ function ApplyJobModal({ job, onClose, onApplied }) {
       setTimeout(() => {
         localStorage.removeItem('token');
         localStorage.removeItem('sebenza_user');
-        localStorage.removeItem('gshop_user');
         window.location.href = '/login';
       }, 2000);
       return;
@@ -64,7 +63,6 @@ function ApplyJobModal({ job, onClose, onApplied }) {
         setTimeout(() => {
           localStorage.removeItem('token');
           localStorage.removeItem('sebenza_user');
-          localStorage.removeItem('gshop_user');
           window.location.href = '/login';
         }, 2000);
       } else {
