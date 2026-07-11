@@ -1,0 +1,46 @@
+name: DB backup (daily)
+
+# Daily pg_dump of the Supabase Postgres database, stored as a workflow
+# artifact for 30 days. Free-tier Supabase has no PITR — this is the
+# restore-of-last-resort. Restore with:
+#   pg_restore --clean --if-exists -d "$DIRECT_URL" sebenza-YYYY-MM-DD.dump
+# Requires the SUPABASE_DB_URL repo secret (the DIRECT 5432 connection
+# string, NOT the pgbouncer pooler URL — pg_dump needs a real session).
+on:
+  schedule:
+    - cron: '30 2 * * *'   # 02:30 UTC = 04:30 SAST, low-traffic
+  workflow_dispatch: {}
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install PostgreSQL 17 client (server is PG 17)
+        run: |
+          sudo sh -c 'echo "deb https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-client-17
+
+      - name: Dump database
+        env:
+          DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          test -n "$DB_URL" || { echo "SUPABASE_DB_URL secret is not set"; exit 1; }
+          FILE="sebenza-$(date -u +%F).dump"
+          /usr/lib/postgresql/17/bin/pg_dump "$DB_URL" \
+            --format=custom --no-owner --no-privileges \
+            --file "$FILE"
+          ls -lh "$FILE"
+          # Sanity: a dump with fewer than 10 tables means something went wrong.
+          TABLES=$(/usr/lib/postgresql/17/bin/pg_restore --list "$FILE" | grep -c "TABLE DATA" || true)
+          echo "Tables with data entries: $TABLES"
+          test "$TABLES" -ge 10
+
+      - name: Upload artifact (30-day retention)
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_id }}
+          path: sebenza-*.dump
+          retention-days: 30
+          if-no-files-found: error
