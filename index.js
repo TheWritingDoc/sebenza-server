@@ -1,3 +1,5 @@
+// Sentry must load before express (see instrument.js). No-op without SENTRY_DSN.
+const Sentry = require('./instrument');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
@@ -122,6 +124,11 @@ const apiLimiter = rateLimit({
 
 // Trust the Render proxy so req.ip and X-Forwarded-For are accurate.
 app.set('trust proxy', 1);
+
+// Structured JSON request logs with request IDs (pino). Health-check and
+// static-asset noise is filtered; auth headers are redacted.
+const { logger, httpLogger } = require('./utils/logger');
+app.use(httpLogger);
 
 app.use('/api/', apiLimiter);
 
@@ -794,7 +801,10 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(buildPath, 'index.html'));
 });
 
-// Error handling
+// Sentry sees every unhandled route error first (no-op without DSN)…
+Sentry.setupExpressErrorHandler(app);
+
+// …then our handler shapes the client-facing response.
 app.use((err, req, res, next) => {
   if (err.code === 'LIMIT_FILE_SIZE') {
     return res.status(413).json({ error: 'File too large. Maximum upload size is 15MB per photo.' });
@@ -811,7 +821,7 @@ app.use((err, req, res, next) => {
   if (err.message && err.message.includes('Invalid file')) {
     return res.status(400).json({ error: err.message });
   }
-  console.error(err.stack);
+  (req.log || logger).error({ err, reqId: req.id }, 'Unhandled route error');
   const body = { error: 'Something went wrong!' };
   if (!isProd) body.details = err.message;
   res.status(500).json(body);
@@ -1207,8 +1217,10 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 // leave the process in a half-dead state.
 process.on('unhandledRejection', (reason) => {
   console.error('UNHANDLED REJECTION:', reason);
+  try { Sentry.captureException(reason); } catch (e) { /* sentry off */ }
 });
 process.on('uncaughtException', (err) => {
   console.error('UNCAUGHT EXCEPTION:', err);
+  try { Sentry.captureException(err); } catch (e) { /* sentry off */ }
   shutdown('uncaughtException');
 });

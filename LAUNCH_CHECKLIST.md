@@ -82,8 +82,13 @@ Legend: **P0** = do not launch without · **P1** = before real money / any scale
   image (renamed HTML/exe → 400), output is clean JPEG, EXIF/GPS stripped, auto-rotated,
   capped 2000px. Polyglot payloads destroyed (verified: appended `<script>` gone).
   Dead disk-based `processImages.js` removed.
-- [ ] **Error tracking + structured logging (owner: needs a Sentry account).** Add
-  Sentry (free) + pino/morgan with request IDs — prod 500s are otherwise invisible.
+- [x] **DONE (code)** Error tracking + structured logging. Sentry wired
+  (instrument.js, express error handler, crash handlers) — activates when
+  `SENTRY_DSN` is set, no code change; boot log prints "Sentry error tracking: ON".
+  Pino JSON request logs with request IDs (honours incoming `X-Request-Id`),
+  auth headers redacted, health/static noise filtered, 4xx→warn 5xx→error.
+  **Owner: create a free project at sentry.io (Node/Express) and set `SENTRY_DSN`
+  in Render.** Optional: `LOG_LEVEL` (default info).
 - [x] **DONE** Prisma migrations baseline. `prisma/migrations/0_init` captures the live
   DB exactly (15 tables, 29 indexes, 29 FKs), marked applied via `migrate resolve`.
   `schema.prisma` aligned to the DB (index/FK names, `onUpdate: NoAction`, DECIMAL types,
