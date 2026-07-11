@@ -298,7 +298,11 @@ export default function NotificationSystem({ user, socket, panelOpen: controlled
       // user must act on; everything else → a single auto-dismissing toast.
       // (No more duplicate toast-next-to-popup, no synthetic "progress" toasts.)
       if (isCritical) {
-        setActionPopup(notif);
+        // If the user is already inside this job's Work Hub, it auto-routes to
+        // the right step (and opens the right modal) — a blocking popup on top
+        // is a third surface demanding the same action. Skip it.
+        const inThisJobsHub = notif.jobId && window.location.pathname === `/jobs/workhub/${notif.jobId}`;
+        if (!inThisJobsHub) setActionPopup(notif);
       } else {
         const toastId = notif._id || Date.now() + Math.random();
         setToasts(prev => [...prev, { ...notif, toastId, isCritical: false }]);

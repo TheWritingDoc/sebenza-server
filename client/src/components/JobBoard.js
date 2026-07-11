@@ -1508,6 +1508,17 @@ function JobBoard({ user, onViewPortfolio }) {
   // instead of "Unknown"; other users' unpopulated posters read "Neighbour".
   const posterName = (p) => p?.name || (String(p?._id || p || '') === String(userId) ? 'You' : 'Neighbour');
 
+  // If the confirm-completion modal is open but the job has already moved
+  // past pending_review (confirmed on another device / by the flow itself),
+  // close it — otherwise it lingers on top of the completed job.
+  useEffect(() => {
+    if (!confirmingJob) return;
+    const fresh = [...myJobs, ...jobs].find(j => j._id === confirmingJob._id);
+    if (fresh && (fresh.status !== 'pending_review' || fresh.completionRequest?.status !== 'pending')) {
+      setConfirmingJob(null);
+    }
+  }, [myJobs, jobs, confirmingJob]);
+
   const openConfirmCompletion = (job) => {
     setConfirmingJob(job);
     setConfirmPhotos([]);

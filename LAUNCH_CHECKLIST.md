@@ -94,8 +94,11 @@ Legend: **P0** = do not launch without · **P1** = before real money / any scale
   `schema.prisma` aligned to the DB (index/FK names, `onUpdate: NoAction`, DECIMAL types,
   JSON defaults) → **zero drift** (`migrate diff` = empty migration). Render build now runs
   `prisma migrate deploy`; CI has a drift guard (migrations must reproduce the schema).
-- [ ] **Backups (owner: plan decision).** Supabase free tier has limited backup/no PITR —
-  schedule `pg_dump` (GH Action/Render cron) or upgrade the plan.
+- [x] **DONE** Backups: daily `pg_dump` GitHub Action (02:30 UTC + manual dispatch),
+  PG17-client custom-format dump with a table-count sanity check, stored as workflow
+  artifacts (30-day retention). `SUPABASE_DB_URL` repo secret set. **First run verified
+  green.** Restore: `pg_restore --clean --if-exists -d "$DIRECT_URL" <dump>`. For
+  point-in-time recovery later, upgrade the Supabase plan.
 
 ## P1 — Client / mobile
 
