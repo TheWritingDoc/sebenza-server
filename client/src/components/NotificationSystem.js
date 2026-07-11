@@ -218,6 +218,14 @@ export default function NotificationSystem({ user, socket, panelOpen: controlled
         const notifs = Array.isArray(data) ? data : (data.notifications || []);
         setNotifications(notifs);
 
+        // Retract any toast/popup whose notification was superseded server-side
+        // (marked read) while this client missed the socket event — e.g. the
+        // flow advanced on the other party's device. Without this, a stale
+        // "confirm completion" popup can outlive its step until reload.
+        const readIds = new Set(notifs.filter(n => n.read).map(n => n._id));
+        setToasts(prev => prev.filter(t => !readIds.has(t._id)));
+        setActionPopup(prev => (prev && readIds.has(prev._id)) ? null : prev);
+
         // Announce critical notifications the socket missed (silent-arrival fix).
         if (seenIdsRef.current === null) {
           // First fetch after app open: don't re-alert the whole backlog.

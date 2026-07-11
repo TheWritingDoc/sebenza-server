@@ -1503,6 +1503,11 @@ function JobBoard({ user, onViewPortfolio }) {
     );
   });
 
+
+  // Own job cards get posterId as a bare id (not populated) — show "You"
+  // instead of "Unknown"; other users' unpopulated posters read "Neighbour".
+  const posterName = (p) => p?.name || (String(p?._id || p || '') === String(userId) ? 'You' : 'Neighbour');
+
   const openConfirmCompletion = (job) => {
     setConfirmingJob(job);
     setConfirmPhotos([]);
@@ -1571,8 +1576,8 @@ function JobBoard({ user, onViewPortfolio }) {
 
 
 
-  const handleConfirmCompletionSubmit = async () => {
-    if (confirmPhotos.length === 0) {
+  const handleConfirmCompletionSubmit = async (skipPhotos = false) => {
+    if (confirmPhotos.length === 0 && !skipPhotos) {
       showMsg('Please take at least one photo with your camera to confirm');
       return;
     }
@@ -1835,7 +1840,7 @@ function JobBoard({ user, onViewPortfolio }) {
               );
             })()}
             <span style={{ width: 3, height: 3, borderRadius: '50%', background: '#cbd5e1' }} />
-            <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>{job.posterId?.name || 'Unknown'}</span>
+            <span style={{ fontSize: 12, color: '#64748b', fontWeight: 600 }}>{posterName(job.posterId)}</span>
             {job.posterId?.rating > 0 && (
               <>
                 <span style={{ width: 3, height: 3, borderRadius: '50%', background: '#cbd5e1' }} />
@@ -3168,6 +3173,7 @@ function JobBoard({ user, onViewPortfolio }) {
               }}>
                 <TabIcon size={14} strokeWidth={2.2} />
                 <span style={{ whiteSpace: 'nowrap' }}>{tab.shortLabel || tab.label}</span>
+                {tab.count > 0 && ' '}
                 {tab.count > 0 && (
                   <span style={{
                     fontSize: 10, fontWeight: 800,
@@ -4175,7 +4181,7 @@ function JobBoard({ user, onViewPortfolio }) {
                 display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, color: 'white', fontWeight: 600
               }}>{!viewingJob.posterId?.avatar && viewingJob.posterId?.name?.charAt(0).toUpperCase()}</div>
               <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: '#1e293b' }}>{viewingJob.posterId?.name || 'Unknown'}</div>
+                <div style={{ fontSize: 14, fontWeight: 700, color: '#1e293b' }}>{posterName(viewingJob.posterId)}</div>
                 <div style={{ fontSize: 11, color: '#94a3b8' }}>
                   {viewingJob.posterId?.rating > 0 ? `⭐ ${viewingJob.posterId.rating.toFixed(1)} • ` : ''}
                   Posted {new Date(viewingJob.createdAt).toLocaleDateString()}
@@ -4621,11 +4627,17 @@ function JobBoard({ user, onViewPortfolio }) {
             })()}
 
             <div style={{ display: 'flex', gap: 10 }}>
-              <button type="button" onClick={handleConfirmCompletionSubmit} disabled={confirmPhotos.length === 0 || confirmingCompletion} style={{
+              <button type="button" onClick={() => handleConfirmCompletionSubmit(false)} disabled={confirmPhotos.length === 0 || confirmingCompletion} style={{
                 flex: 1, padding: 'clamp(12px, 3vw, 14px)', borderRadius: 16, border: 'none', fontSize: 14, fontWeight: 800, cursor: confirmingCompletion ? 'not-allowed' : 'pointer',
                 background: 'linear-gradient(135deg, #22c55e, #16a34a)', color: 'white',
                 boxShadow: '0 4px 16px rgba(34,197,94,0.3)', opacity: (confirmPhotos.length === 0 || confirmingCompletion) ? 0.5 : 1, minHeight: 48
               }}>{confirmingCompletion ? '⏳ Confirming...' : '✅ Confirm Completion'}</button>
+              {confirmPhotos.length === 0 && (
+                <button type="button" onClick={() => { if (window.confirm('Confirm without photos? Only do this if your camera is not working — your rating will still be recorded.')) handleConfirmCompletionSubmit(true); }} disabled={confirmingCompletion} style={{
+                  width: '100%', marginTop: 8, minHeight: 44, border: 'none', background: 'transparent',
+                  color: '#94a3b8', fontSize: 12, fontWeight: 600, cursor: 'pointer', textDecoration: 'underline',
+                }}>✋ Camera not working? Confirm without photos</button>
+              )}
             </div>
 
 
