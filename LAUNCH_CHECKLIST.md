@@ -77,9 +77,11 @@ Legend: **P0** = do not launch without · **P1** = before real money / any scale
   cached `/api/stats/public`. Verified live.
 - [x] **DONE (79dd54f)** `scripts/seed.js` refuses to run in production.
 - [x] **DONE (79dd54f)** `.env.example` rewritten for Supabase/Twilio/SMTP.
-- [ ] **Upload content-sniffing.** Filter is mimetype/extension only (upload.js);
-  re-encode via `sharp` (already a dep) before storing to the public bucket. *(Deferred:
-  lower risk — images go to a public read-only bucket, not executed.)*
+- [x] **DONE** Upload content-sniffing: every upload (Supabase AND local-disk dev
+  fallback) is re-encoded through `sharp` before persisting — must decode as a real
+  image (renamed HTML/exe → 400), output is clean JPEG, EXIF/GPS stripped, auto-rotated,
+  capped 2000px. Polyglot payloads destroyed (verified: appended `<script>` gone).
+  Dead disk-based `processImages.js` removed.
 - [ ] **Error tracking + structured logging (owner: needs a Sentry account).** Add
   Sentry (free) + pino/morgan with request IDs — prod 500s are otherwise invisible.
 - [x] **DONE** Prisma migrations baseline. `prisma/migrations/0_init` captures the live

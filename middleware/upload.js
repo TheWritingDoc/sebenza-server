@@ -39,16 +39,9 @@ if (!storageEnabled) {
   });
 }
 
-const diskStorage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, path.join(UPLOADS_BASE, resolveFolder(file.fieldname)));
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
-});
-
+// Always buffer in memory: every upload is re-encoded through sharp before
+// it is persisted (Supabase Storage in prod, local disk in dev), so the raw
+// user bytes never touch storage in either mode.
 const memoryStorage = multer.memoryStorage();
 
 const fileFilter = (req, file, cb) => {
@@ -66,7 +59,7 @@ const fileFilter = (req, file, cb) => {
 };
 
 const upload = multer({
-  storage: storageEnabled ? memoryStorage : diskStorage,
+  storage: memoryStorage,
   limits: {
     fileSize: 15 * 1024 * 1024, // 15MB per file
     files: 10
@@ -85,19 +78,44 @@ function resolveFolder(fieldname) {
   return 'misc';
 }
 
+// Re-encode every upload through sharp before it is stored. This is the
+// content-sniffing defence: the buffer must decode as a real image (a
+// renamed .exe/.html/polyglot fails and is rejected), the output is a clean
+// JPEG with EXIF (including GPS) stripped, auto-rotated, and capped at
+// 2000px — so nothing user-controlled beyond pixels reaches the bucket.
+const sharp = require('sharp');
+async function reencodeImage(buffer) {
+  try {
+    return await sharp(buffer, { failOn: 'error', limitInputPixels: 30_000_000 })
+      .rotate()
+      .resize(2000, 2000, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 85, mozjpeg: true })
+      .toBuffer();
+  } catch (e) {
+    const err = new Error('Invalid image file');
+    err.status = 400;
+    throw err;
+  }
+}
+
 async function uploadFile(file, folder) {
+  const clean = await reencodeImage(file.buffer);
+
   if (!storageEnabled) {
     const folderPath = resolveFolder(file.fieldname);
-    return `/uploads/${folderPath}/${file.filename}`;
+    const name = `${file.fieldname}-${Date.now()}-${Math.round(Math.random() * 1E9)}.jpg`;
+    const dir = path.join(UPLOADS_BASE, folderPath);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, name), clean);
+    return `/uploads/${folderPath}/${name}`;
   }
 
   const bucket = bucketFor(folder);
   const safeName = path.parse(file.originalname).name.replace(/[^a-zA-Z0-9-_]/g, '-');
-  const ext = path.extname(file.originalname).toLowerCase() || '.jpg';
-  const objectPath = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}-${safeName}${ext}`;
+  const objectPath = `${folder}/${Date.now()}-${Math.round(Math.random() * 1E9)}-${safeName}.jpg`;
 
-  const { error } = await supabase.storage.from(bucket).upload(objectPath, file.buffer, {
-    contentType: file.mimetype,
+  const { error } = await supabase.storage.from(bucket).upload(objectPath, clean, {
+    contentType: 'image/jpeg',
     upsert: false,
   });
   if (error) throw new Error(`Storage upload failed: ${error.message}`);
@@ -144,3 +162,4 @@ module.exports.uploadFiles = uploadFiles;
 module.exports.signSecureUrl = signSecureUrl;
 module.exports.storageEnabled = storageEnabled;
 module.exports.resolveFolder = resolveFolder;
+module.exports.reencodeImage = reencodeImage;
