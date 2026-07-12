@@ -14,6 +14,8 @@ function ApplyJobModal({ job, onClose, onApplied }) {
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [timeAdjustment, setTimeAdjustment] = useState('');
+  const [quoteType, setQuoteType] = useState('free'); // free | paid
+  const [quoteFee, setQuoteFee] = useState('');
   const [lightboxIndex, setLightboxIndex] = useState(null);
   const sheetRef = useRef(null);
 
@@ -29,6 +31,10 @@ function ApplyJobModal({ job, onClose, onApplied }) {
     const errs = {};
     const amount = parseFloat(proposedAmount);
     if (isNaN(amount) || amount <= 0) errs.proposedAmount = true;
+    if (quoteType === 'paid') {
+      const f = parseFloat(quoteFee);
+      if (isNaN(f) || f < 1 || f > 500) errs.quoteFee = true;
+    }
 
     if (Object.keys(errs).length) {
       setFieldErrors(errs);
@@ -51,7 +57,7 @@ function ApplyJobModal({ job, onClose, onApplied }) {
     setError('');
     try {
       await axios.post(`${API_URL}/api/jobs/${job._id}/apply`,
-        { proposedAmount: amount, timeAdjustment: timeAdjustment ? new Date(timeAdjustment).toISOString() : undefined },
+        { proposedAmount: amount, timeAdjustment: timeAdjustment ? new Date(timeAdjustment).toISOString() : undefined, quoteType, quoteFee: quoteType === 'paid' ? parseFloat(quoteFee) : 0 },
         { headers: { Authorization: `Bearer ${token}` }, withCredentials: true }
       );
       onApplied();
@@ -185,6 +191,35 @@ function ApplyJobModal({ job, onClose, onApplied }) {
         {error && (
           <div style={{ background: '#fef2f2', color: '#991b1b', padding: 12, borderRadius: 14, fontSize: 13, fontWeight: 600, marginBottom: 16 }}>{error}</div>
         )}
+
+        {/* Quote terms: free or paid call-out quote */}
+        <div style={{ marginBottom: 16 }}>
+          <label style={{ display: 'block', fontSize: 13, fontWeight: 700, color: '#1e293b', marginBottom: 6 }}>Your quote</label>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" onClick={() => setQuoteType('free')} style={{
+              flex: 1, minHeight: 44, borderRadius: 12, cursor: 'pointer', fontWeight: 700, fontSize: 13,
+              border: quoteType === 'free' ? '2px solid #22c55e' : '2px solid #e2e8f0',
+              background: quoteType === 'free' ? '#f0fdf4' : 'white', color: quoteType === 'free' ? '#166534' : '#64748b',
+            }}>🆓 Free quote</button>
+            <button type="button" onClick={() => setQuoteType('paid')} style={{
+              flex: 1, minHeight: 44, borderRadius: 12, cursor: 'pointer', fontWeight: 700, fontSize: 13,
+              border: quoteType === 'paid' ? '2px solid #6366f1' : '2px solid #e2e8f0',
+              background: quoteType === 'paid' ? '#eef2ff' : 'white', color: quoteType === 'paid' ? '#4338ca' : '#64748b',
+            }}>💼 Paid quote</button>
+          </div>
+          {quoteType === 'paid' && (
+            <div style={{ marginTop: 8 }}>
+              <input type="number" inputMode="numeric" value={quoteFee} min="1" max="500"
+                onChange={(e) => { setQuoteFee(e.target.value); setFieldErrors(prev => ({ ...prev, quoteFee: false })); }}
+                placeholder="Quote / call-out fee (R1–R500)"
+                style={{ width: '100%', boxSizing: 'border-box', padding: '12px 14px', borderRadius: 12, fontSize: 14,
+                  border: fieldErrors.quoteFee ? '2px solid #dc2626' : '2px solid #e2e8f0' }} />
+              <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
+                Paid to you the moment the poster accepts your quote — covers your travel / assessment time.
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Proposed Pay with quick chips */}
         <div style={{ marginBottom: 16 }}>

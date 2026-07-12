@@ -130,6 +130,19 @@ function PublicProfile() {
                 <span style={{ fontSize: 11, color: '#94a3b8' }}>No ratings yet</span>
               )}
               <BehaviourBadges flags={trust.community?.flags} />
+              {trust.payer?.badge && (() => {
+                const p = trust.payer;
+                const cfg = {
+                  fast_payer: { label: `⚡ Fast payer — pays within ${Math.max(1, Math.round(p.avgWaitMinutes))} min`, bg: '#f0fdf4', color: '#166534', border: '#bbf7d0' },
+                  pays_on_time: { label: `💳 Pays on time (avg ${p.avgWaitMinutes < 60 ? Math.round(p.avgWaitMinutes) + ' min' : Math.round(p.avgWaitMinutes / 60) + ' h'})`, bg: '#eff6ff', color: '#1d4ed8', border: '#bfdbfe' },
+                  slow_payer: { label: `🐢 Slow payer (avg ${Math.round(p.avgWaitMinutes / 60)} h wait)`, bg: '#fef2f2', color: '#991b1b', border: '#fecaca' },
+                }[p.badge];
+                return cfg ? (
+                  <span title={`${p.count} payment${p.count === 1 ? '' : 's'} tracked`} style={{ fontSize: 10, fontWeight: 800, background: cfg.bg, color: cfg.color, border: `1px solid ${cfg.border}`, padding: '2px 8px', borderRadius: 999 }}>
+                    {cfg.label}
+                  </span>
+                ) : null;
+              })()}
             </div>
             {trust.totalStars != null && (
               <div style={{ fontSize: 12, fontWeight: 800, color: '#4f46e5', marginTop: 4 }}>

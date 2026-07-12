@@ -287,6 +287,18 @@ function JobApplicantsModal({ job, user, onClose, onUpdated, onViewPortfolio }) 
                 )}
               </div>
             </div>
+            {/* Quote terms */}
+            <div style={{ marginTop: 4 }}>
+              {app.quoteType === 'paid' && Number(app.quoteFee) > 0 ? (
+                <span style={{ fontSize: 11, fontWeight: 800, background: '#eef2ff', color: '#4338ca', padding: '3px 10px', borderRadius: 999, border: '1px solid #c7d2fe' }}>
+                  💼 Quote fee R{Number(app.quoteFee)}{app.quoteFeePaid ? ' — paid' : ' (charged when you approve)'}
+                </span>
+              ) : (
+                <span style={{ fontSize: 11, fontWeight: 800, background: '#f0fdf4', color: '#166534', padding: '3px 10px', borderRadius: 999, border: '1px solid #bbf7d0' }}>
+                  🆓 Free quote
+                </span>
+              )}
+            </div>
             {/* Identity trust — how well this person has proven who they are */}
             <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
               <span style={{ fontSize: 10, color: '#64748b', fontWeight: 700 }}>Identity</span>

@@ -327,6 +327,9 @@ model Application {
   jobId              String    @map("job_id") @db.Uuid
   applicantId        String    @map("applicant_id") @db.Uuid
   proposedAmount     Decimal   @map("proposed_amount") @db.Decimal(12, 2)
+  quoteType          String    @default("free") @map("quote_type") // free | paid
+  quoteFee           Decimal   @default(0) @map("quote_fee") @db.Decimal(12, 2)
+  quoteFeePaid       Boolean   @default(false) @map("quote_fee_paid")
   proposedTime       DateTime? @map("proposed_time") @db.Timestamptz(6)
   timeAdjustment     DateTime? @map("time_adjustment") @db.Timestamptz(6)
   approvedTime       DateTime? @map("approved_time") @db.Timestamptz(6)

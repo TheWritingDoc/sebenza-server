@@ -567,7 +567,7 @@ router.post('/', auth, createJobLimiter, upload.array('images', 10), async (req,
 router.post('/:id/apply', auth, applyLimiter, async (req, res) => {
   try {
     if (!isId(req.params.id)) return res.status(404).json({ error: 'Job not found' });
-    const { proposedAmount, proposedTime, message } = req.body;
+    const { proposedAmount, proposedTime, message, quoteType, quoteFee } = req.body;
     const job = await prisma.job.findUnique({ where: { id: req.params.id } });
     if (!job) return res.status(404).json({ error: 'Job not found' });
     if (job.status !== 'open') return res.status(400).json({ error: 'Job is no longer open for applications' });
@@ -584,6 +584,14 @@ router.post('/:id/apply', auth, applyLimiter, async (req, res) => {
     const amount = parseFloat(proposedAmount);
     if (isNaN(amount) || amount <= 0) return res.status(400).json({ error: 'Invalid proposed amount' });
 
+    // Quote terms: helpers can quote for free or charge a call-out/quote fee
+    // (paid by the poster on approval - compensates travel/assessment time).
+    const qType = quoteType === 'paid' ? 'paid' : 'free';
+    const qFee = qType === 'paid' ? parseFloat(quoteFee) : 0;
+    if (qType === 'paid' && (isNaN(qFee) || qFee < 1 || qFee > 500)) {
+      return res.status(400).json({ error: 'Quote fee must be between R1 and R500' });
+    }
+
     // Duplicate guard: unique (jobId, applicantId) constraint does it atomically.
     try {
       await prisma.application.create({
@@ -591,6 +599,8 @@ router.post('/:id/apply', auth, applyLimiter, async (req, res) => {
           jobId: job.id,
           applicantId: req.userId,
           proposedAmount: amount,
+          quoteType: qType,
+          quoteFee: qFee,
           proposedTime: proposedTime ? new Date(proposedTime) : null,
           message: message ? sanitizeString(message, MAX_MESSAGE) : '',
           status: 'pending'
@@ -608,7 +618,7 @@ router.post('/:id/apply', auth, applyLimiter, async (req, res) => {
       notify(req, job.posterId, {
         type: 'application_received',
         title: 'New Offer to Help!',
-        message: `${applicant?.name || 'Someone'} offered R${amount} for "${job.title}"`,
+        message: `${applicant?.name || 'Someone'} offered R${amount} for "${job.title}"${qType === 'paid' ? ` (quote fee R${qFee})` : ''}`,
         jobId: job.id
       });
     } catch (notifyErr) {
@@ -638,6 +648,19 @@ router.post('/:id/applications/:appId/approve', auth, async (req, res) => {
         data: { status: 'approved', acceptedApplicationId: req.params.appId }
       });
       if (guard.count === 0) return null;
+      const app = await tx.application.findUnique({ where: { id: req.params.appId }, select: { quoteType: true, quoteFee: true, quoteFeePaid: true, applicantId: true } });
+      // Paid quote: the fee moves poster -> helper the moment the quote is
+      // accepted (approval), guarded against overdraw and double-payment.
+      if (app && app.quoteType === 'paid' && Number(app.quoteFee) > 0 && !app.quoteFeePaid) {
+        const fee = Number(app.quoteFee);
+        const debit = await tx.user.updateMany({
+          where: { id: req.userId, randBalance: { gte: fee } },
+          data: { randBalance: { decrement: fee } }
+        });
+        if (debit.count === 0) throw Object.assign(new Error(`Insufficient balance for the R${fee} quote fee`), { status: 400 });
+        await tx.user.update({ where: { id: app.applicantId }, data: { randBalance: { increment: fee }, totalEarnedRand: { increment: fee } } });
+        await tx.application.update({ where: { id: req.params.appId }, data: { quoteFeePaid: true } });
+      }
       await tx.application.update({
         where: { id: req.params.appId },
         data: {
@@ -673,6 +696,7 @@ router.post('/:id/applications/:appId/approve', auth, async (req, res) => {
       console.error('Approve notify error:', notifyErr.message);
     }
   } catch (err) {
+    if (err.status === 400) return res.status(400).json({ error: err.message });
     console.error('Approve error:', err);
     res.status(500).json({ error: 'Server error' });
   }
@@ -1406,14 +1430,11 @@ router.post('/:id/confirm-completion', auth, upload.array('photos', 10), async (
     if (!job) return res.status(404).json({ error: 'Job not found' });
     if (job.status !== 'pending_review') return res.status(400).json({ error: `Cannot confirm: job is ${job.status}` });
 
-    // The rating may arrive here inline, or have been submitted separately via
-    // POST /:id/review first (the app does the latter). Require one of the two;
-    // never apply it twice.
+    // Rating moved AFTER payment (owner decision 2026-07-12): confirming the
+    // work and rating the person are separate moments now. An inline rating is
+    // still accepted for backwards compatibility, but no longer required.
     const ratingNum = parseInt(rating);
     const hasInlineRating = !isNaN(ratingNum) && ratingNum >= 1 && ratingNum <= 5;
-    if (!hasInlineRating && !job.posterReviewed) {
-      return res.status(400).json({ error: 'Rating must be an integer between 1 and 5' });
-    }
 
     // Confirmation photos accepted for parity but not persisted separately
     if (req.files && req.files.length > 0) await uploadFiles(req.files, 'proof');
@@ -1607,13 +1628,24 @@ router.post('/:id/payment-handshake', auth, async (req, res) => {
     // second manual confirmation) finalizes the job. Guarded flip — exactly
     // one request wins and moves the money; the loser gets the idempotent
     // response.
+    // Payment-wait timer: from the moment the helper marked the work done
+    // until payment confirmation. This is the poster's "payer record" — it
+    // aggregates onto their community stats so future helpers can see whether
+    // they pay promptly.
+    const paymentConfirmTime = new Date();
+    const waitFromTs = job.helperCompletedAt || job.posterConfirmedAt || job.startedAt;
+    const paymentWaitMinutes = waitFromTs
+      ? Math.max(0, Math.round((paymentConfirmTime - new Date(waitFromTs)) / 60000 * 10) / 10)
+      : null;
+
     const finalizedGuard = await prisma.job.updateMany({
       where: { id: job.id, status: 'pending_payment' },
       data: {
         paymentConfirmed: true,
-        paymentConfirmedAt: new Date(),
+        paymentConfirmedAt: paymentConfirmTime,
         status: 'completed',
-        completedAt: new Date()
+        completedAt: paymentConfirmTime,
+        ...(paymentWaitMinutes !== null ? { paymentWaitTimeMinutes: paymentWaitMinutes } : {})
       }
     });
     if (finalizedGuard.count === 0) {
@@ -1622,6 +1654,22 @@ router.post('/:id/payment-handshake', auth, async (req, res) => {
         return res.json({ message: 'Payment already confirmed. Job completed.', paymentConfirmed: true });
       }
       return res.status(400).json({ error: 'Job is no longer awaiting payment' });
+    }
+
+    // Poster payer record: rolling average of payment wait (non-critical).
+    if (paymentWaitMinutes !== null) {
+      try {
+        const poster = await prisma.user.findUnique({ where: { id: job.posterId }, select: { communityStats: true } });
+        const stats = poster?.communityStats || {};
+        const n = Number(stats.paymentsConfirmed) || 0;
+        const avg = Number(stats.avgPaymentWaitMinutes) || 0;
+        stats.avgPaymentWaitMinutes = Math.round(((avg * n + paymentWaitMinutes) / (n + 1)) * 10) / 10;
+        stats.paymentsConfirmed = n + 1;
+        stats.maxPaymentWaitMinutes = Math.max(Number(stats.maxPaymentWaitMinutes) || 0, paymentWaitMinutes);
+        await prisma.user.update({ where: { id: job.posterId }, data: { communityStats: stats } });
+      } catch (statErr) {
+        console.error('Payer record update error:', statErr.message);
+      }
     }
 
     // Audit trail (non-critical).

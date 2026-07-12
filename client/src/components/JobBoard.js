@@ -1524,9 +1524,21 @@ function JobBoard({ user, onViewPortfolio }) {
     setConfirmPhotos([]);
   };
 
+  const lastAutoRouteRef = useRef({ key: '', at: 0 });
   function autoRouteWorkHub(job, eventType = '') {
     if (!job?._id) return;
     if (viewingJobRef.current?._id !== job._id) return;
+
+    // Damping: several refetches fire per socket event and each used to
+    // re-run navigation/tab/model churn — the visible "popping back and
+    // forth" at the end of the flow. Only act when the job's routing-relevant
+    // state actually changed (or a genuinely new event type arrives).
+    const iAmPosterForKey = job.posterId?._id?.toString?.() === userId || job.posterId?.toString?.() === userId;
+    const ratedKey = iAmPosterForKey ? !!job.posterReviewed : !!job.providerReviewed;
+    const routeKey = `${job._id}|${job.status}|${job.completionRequest?.status || ''}|${ratedKey}|${String(eventType || '').toLowerCase()}`;
+    const now = Date.now();
+    if (lastAutoRouteRef.current.key === routeKey && now - lastAutoRouteRef.current.at < 15000) return;
+    lastAutoRouteRef.current = { key: routeKey, at: now };
 
     const isPosterForJob = job.posterId?._id?.toString?.() === userId || job.posterId?.toString?.() === userId;
     const isAcceptedWorker = job.myApplication?.status === 'accepted';
@@ -1593,38 +1605,10 @@ function JobBoard({ user, onViewPortfolio }) {
       return;
     }
     setConfirmingCompletion(true);
-    const isConfPoster = confirmingJob.posterId?._id?.toString?.() === userId || confirmingJob.posterId?.toString?.() === userId;
-    const confAlreadyReviewed = isConfPoster ? confirmingJob.posterReviewed : confirmingJob.providerReviewed;
-    const confOverallRating = Math.round(Object.values(confirmCategories).reduce((a, b) => a + b, 0) / 4);
-    const confLowest = Math.min(...Object.values(confirmCategories));
-    if (!confAlreadyReviewed && confLowest <= 2 && confirmComment.trim().length < 10) {
-      showMsg('Please share at least 10 characters of constructive feedback.');
-      return;
-    }
     try {
-      // 1. Submit rating first (gracefully skip if already reviewed)
-      if (!confAlreadyReviewed) {
-        let reviewOk = false;
-        try {
-          await axios.post(`${API_URL}/api/jobs/${confirmingJob._id}/review`, {
-            categories: confirmCategories,
-            overallRating: confOverallRating,
-            comment: confirmComment.trim()
-          }, { headers: { Authorization: `Bearer ${token}` } });
-          reviewOk = true;
-        } catch (reviewErr) {
-          const errMsg = reviewErr.response?.data?.error || '';
-          if (typeof errMsg === 'string' && errMsg.toLowerCase().includes('already reviewed')) {
-            reviewOk = true;
-          } else {
-            showMsg(errMsg || 'Failed to submit rating');
-            return;
-          }
-        }
-        if (!reviewOk) return;
-      }
-
-      // 2. Then upload photos + confirm completion
+      // Rating moved to AFTER payment confirmation (the Work Hub shows the
+      // rating card once the job is completed) — confirming here is only
+      // about the work itself: photos + location.
       const loc = await getCurrentLocation();
       const formData = new FormData();
       confirmPhotos.forEach(photo => formData.append('photos', photo));
@@ -4390,7 +4374,7 @@ function JobBoard({ user, onViewPortfolio }) {
                       ✅ Job fully completed.
                     </div>
                   )}
-                  {['pending_review', 'pending_payment', 'completed'].includes(viewingJob.status) && (() => {
+                  {viewingJob.status === 'completed' && (() => {
                     const iAmPoster = isPosterForJob(viewingJob);
                     const iHaveRated = iAmPoster ? viewingJob.posterReviewed : viewingJob.providerReviewed;
                     if (iHaveRated) {
@@ -4403,9 +4387,7 @@ function JobBoard({ user, onViewPortfolio }) {
                     return (
                       <div style={{ marginBottom: 8, padding: 12, borderRadius: 12, background: '#fffbeb', border: '2px solid #f59e0b' }}>
                         <div style={{ fontSize: 13, fontWeight: 800, color: '#92400e', marginBottom: 4 }}>⭐ Rate the {iAmPoster ? 'helper' : 'job provider'}</div>
-                        {viewingJob.status !== 'completed' && (
-                          <div style={{ fontSize: 11, color: '#a16207', marginBottom: 8 }}>Ratings happen before payment. Your stars stay hidden from the other person until payment is confirmed.</div>
-                        )}
+                        <div style={{ fontSize: 11, color: '#a16207', marginBottom: 8 }}>Payment is done — how was the experience? Your rating builds their community stars.</div>
                         <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginBottom: 8 }}>
                           {[1, 2, 3, 4, 5].map(star => (
                             <button key={star} onClick={() => setMyJobRating(star)} style={{ border: 'none', background: 'transparent', fontSize: 30, cursor: 'pointer', padding: 2, filter: star <= myJobRating ? 'none' : 'grayscale(1) opacity(0.35)' }}>⭐</button>
@@ -4533,7 +4515,7 @@ function JobBoard({ user, onViewPortfolio }) {
 
             <div style={{ background: '#dbeafe', borderRadius: 14, padding: 12, marginBottom: 16, border: '1px solid #93c5fd' }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: '#1d4ed8', marginBottom: 4 }}>📸 Confirmation Required</div>
-              <div style={{ fontSize: 12, color: '#1e40af' }}>Upload your own photos and make sure you have rated the other party before confirming.</div>
+              <div style={{ fontSize: 12, color: '#1e40af' }}>Take your own photos of the finished work to confirm. Rating happens after payment.</div>
             </div>
 
             {/* Show initiator's completion photos */}
@@ -4563,79 +4545,9 @@ function JobBoard({ user, onViewPortfolio }) {
               <PhotoUploadFlow label="Your Photos" onChange={setConfirmPhotos} />
             </div>
 
-            {/* Inline rating form */}
-            {(() => {
-              const confIsPoster = confirmingJob.posterId?._id?.toString?.() === userId || confirmingJob.posterId?.toString?.() === userId;
-              const confAlreadyReviewed = confIsPoster ? confirmingJob.posterReviewed : confirmingJob.providerReviewed;
-              const confRevieweeName = confIsPoster ? 'Helper' : 'Neighbour';
-              const confOverallRating = Math.round(Object.values(confirmCategories).reduce((a, b) => a + b, 0) / 4);
-              const confLowest = Math.min(...Object.values(confirmCategories));
-              const confNeedsConstructive = confLowest <= 2;
-              const confIsExcellent = Object.values(confirmCategories).every(v => v >= 4);
-
-              if (confAlreadyReviewed) {
-                return (
-                  <div style={{ background: '#dcfce7', borderRadius: 12, padding: 10, marginBottom: 16, fontSize: 12, color: '#166534', fontWeight: 600 }}>
-                    ✅ You have already rated this job.
-                  </div>
-                );
-              }
-
-              return (
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: '#1e293b', marginBottom: 8 }}>⭐ Rate {confRevieweeName}</div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                    {[
-                      { key: 'punctuality', label: '⏰ Punctuality', hint: 'Did they show up on time?' },
-                      { key: 'quality', label: '🔧 Quality of Work', hint: 'Was the work done well?' },
-                      { key: 'communication', label: '💬 Communication', hint: 'Were they clear and responsive?' },
-                      { key: 'respect', label: '🤝 Respect', hint: 'Were they kind and professional?' }
-                    ].map(({ key, label, hint }) => (
-                      <div key={key} style={{ textAlign: 'center' }}>
-                        <div style={{ fontSize: 13, fontWeight: 700, color: '#374151' }}>{label}</div>
-                        <div style={{ fontSize: 11, color: '#94a3b8', marginBottom: 4 }}>{hint}</div>
-                        <div style={{ display: 'flex', gap: 6, justifyContent: 'center' }}>
-                          {[1, 2, 3, 4, 5].map(s => (
-                            <button key={s} onClick={() => setConfirmCategories(prev => ({ ...prev, [key]: s }))} style={{
-                              fontSize: 24, background: 'none', border: 'none', cursor: 'pointer',
-                              opacity: s <= confirmCategories[key] ? 1 : 0.25
-                            }}>{s <= confirmCategories[key] ? '⭐' : '☆'}</button>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                    <div style={{ background: '#f0fdf4', borderRadius: 14, padding: 12, textAlign: 'center' }}>
-                      <div style={{ fontSize: 13, color: '#166534', fontWeight: 600 }}>Overall: {confOverallRating}/5</div>
-                      <div style={{ fontSize: 12, color: '#22c55e', marginTop: 2 }}>
-                        {confIsExcellent ? '🎉 Outstanding! Help them celebrate.' :
-                         confNeedsConstructive ? '💡 A quick tip can help them improve.' :
-                         '✨ Great experience! Share what stood out.'}
-                      </div>
-                    </div>
-                    <div>
-                      <label style={{ fontSize: 13, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 4 }}>
-                        {confNeedsConstructive ? '💚 Help them grow — what could be better?' : '✨ What did they do well? (optional)'}
-                      </label>
-                      <textarea value={confirmComment} onChange={(e) => setConfirmComment(e.target.value)} rows={3}
-                        placeholder={confNeedsConstructive
-                          ? 'Be kind and specific. Instead of "bad quality", try "The repair worked but needed a second visit for tightening."'
-                          : 'Share a specific moment or detail that made this a great experience...'}
-                        style={{
-                          width: '100%', padding: 12, borderRadius: 14,
-                          border: confNeedsConstructive && confirmComment.trim().length < 10 ? '2px solid #ef4444' : '2px solid #e2e8f0',
-                          fontSize: 13, resize: 'vertical', outline: 'none', fontFamily: 'inherit'
-                        }}
-                      />
-                      {confNeedsConstructive && (
-                        <div style={{ fontSize: 11, color: '#ef4444', marginTop: 2 }}>
-                          Required for lower ratings — min 10 characters ({confirmComment.trim().length}/10)
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              );
-            })()}
+            <div style={{ background: '#eef2ff', borderRadius: 12, padding: 10, marginBottom: 16, fontSize: 12, color: '#4338ca', fontWeight: 600 }}>
+              ⭐ You'll rate {(confirmingJob.posterId?._id?.toString?.() === userId || confirmingJob.posterId?.toString?.() === userId) ? 'your helper' : 'this neighbour'} after payment is confirmed.
+            </div>
 
             <div style={{ display: 'flex', gap: 10 }}>
               <button type="button" onClick={() => handleConfirmCompletionSubmit(false)} disabled={confirmPhotos.length === 0 || confirmingCompletion} style={{

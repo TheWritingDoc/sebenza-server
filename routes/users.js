@@ -158,6 +158,16 @@ router.get('/referrer/:code', async (req, res) => {
 // encourage uploading ID so both sides feel safe. Job quality lives separately
 // in communityStats. See utils/trustScore.js.
 
+// Payer record from community stats: how fast this user releases payment
+// after work is marked done. Shown to helpers before they accept a job.
+function payerRecord(stats = {}) {
+  const count = Number(stats.paymentsConfirmed) || 0;
+  if (count === 0) return { count: 0, avgWaitMinutes: null, badge: null };
+  const avg = Number(stats.avgPaymentWaitMinutes) || 0;
+  const badge = avg <= 30 ? 'fast_payer' : avg <= 24 * 60 ? 'pays_on_time' : 'slow_payer';
+  return { count, avgWaitMinutes: avg, maxWaitMinutes: Number(stats.maxPaymentWaitMinutes) || avg, badge };
+}
+
 // My own trust profile + checklist (drives the Trust Centre screen)
 router.get('/me/trust', auth, async (req, res) => {
   try {
@@ -171,6 +181,7 @@ router.get('/me/trust', auth, async (req, res) => {
     res.json({
       ...trust,                       // identity: score, stars (0.5–5), level, checklist
       community,                      // stars (0–5 | null), reviews, flags
+      payer: payerRecord(user.communityStats),
       totalStars: totalStars(trust.stars, community),
       accountType: user.accountType || 'individual',
       businessName: user.businessName || '',
@@ -210,6 +221,7 @@ router.get('/:id/trust', async (req, res) => {
       level: trust.level,
       score: trust.score,
       community,                      // visible during negotiation / profile views
+      payer: payerRecord(user.communityStats),
       totalStars: totalStars(trust.stars, community),
       verified: !!user.verified,
       emailVerified: !!user.emailVerified,
