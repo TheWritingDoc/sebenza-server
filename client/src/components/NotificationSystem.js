@@ -691,8 +691,11 @@ export default function NotificationSystem({ user, socket, panelOpen: controlled
         </button>
       )}
 
-      {/* Full-screen ACTION REQUIRED popup — must be tapped away */}
-      {actionPopup && (() => {
+      {/* Full-screen ACTION REQUIRED popup — must be tapped away.
+          Render-time guard (not just arrival-time): while the user is inside
+          this job's Work Hub, the hub already routes them to the right step —
+          suppress the popup even if it arrived before navigation settled. */}
+      {actionPopup && !(actionPopup.jobId && window.location.pathname === `/jobs/workhub/${actionPopup.jobId}`) && (() => {
         const config = TYPE_CONFIG[actionPopup.type] || DEFAULT_CONFIG;
         const proceed = () => {
           navigate(resolveNotificationRoute(actionPopup, config.route));
