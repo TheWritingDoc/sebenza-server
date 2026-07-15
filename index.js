@@ -401,8 +401,41 @@ app.post('/api/login', authLimiter, [
       data: { lastLoginAt: new Date(), loginAttempts: 0 }
     });
 
+    // New-device check: an existing user signing in from an unrecognised
+    // device must confirm via phone OTP before getting a session (only
+    // enforceable when they have a verified phone and SMS is configured).
+    const deviceId = String(req.body.deviceId || '').slice(0, 80);
+    const smsConfigured = !!(process.env.TWILIO_SID && process.env.TWILIO_TOKEN && process.env.TWILIO_PHONE);
+    const knownDevice = deviceId && user.lastDeviceId && deviceId === user.lastDeviceId;
+    if (!knownDevice && user.phoneVerified && user.phone && smsConfigured) {
+      const code = genSmsCode();
+      await prisma.smsVerification.deleteMany({ where: { userId: user.id, phone: user.phone } });
+      await prisma.smsVerification.create({
+        data: { userId: user.id, phone: user.phone, code, expiresAt: new Date(Date.now() + 10 * 60 * 1000) }
+      });
+      try {
+        const twilio = require('twilio');
+        const client = twilio(process.env.TWILIO_SID, process.env.TWILIO_TOKEN);
+        const { toE164ZA } = require('./utils/phone');
+        await client.messages.create({
+          body: 'New device sign-in: your Sebenza code is ' + code,
+          from: process.env.TWILIO_PHONE,
+          to: toE164ZA(user.phone)
+        });
+      } catch (smsErr) {
+        console.error('New-device OTP send failed:', smsErr.message);
+        return res.status(500).json({ error: 'Could not send the verification code. Try again.' });
+      }
+      const masked = user.phone.replace(/.(?=.{4})/g, '•');
+      return res.json({ otpRequired: true, phone: user.phone, phoneMasked: masked,
+        message: `New device detected — we sent a code to ${masked}.` });
+    }
+
     // One device at a time: this login becomes the only valid session.
     const tv = await startExclusiveSession(user.id);
+    if (deviceId) {
+      await prisma.user.update({ where: { id: user.id }, data: { lastDeviceId: deviceId } }).catch(() => {});
+    }
     const token = jwt.sign({ userId: user.id, tv }, effectiveJwtSecret, { expiresIn: '30d' });
     res.json({ token, user: authUserPayload(user) });
   } catch (err) {
@@ -532,6 +565,10 @@ app.post('/api/phone/verify', authLimiter, async (req, res) => {
 
     // One device at a time: this login becomes the only valid session.
     const tv = await startExclusiveSession(user.id);
+    const verifiedDeviceId = String(req.body.deviceId || '').slice(0, 80);
+    if (verifiedDeviceId) {
+      await prisma.user.update({ where: { id: user.id }, data: { lastDeviceId: verifiedDeviceId } }).catch(() => {});
+    }
     const token = jwt.sign({ userId: user.id, tv }, effectiveJwtSecret, { expiresIn: '30d' });
     res.json({ token, user: authUserPayload(fresh) });
   } catch (err) {

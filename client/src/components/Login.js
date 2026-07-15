@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import axios from 'axios';
+import getDeviceId from '../shared/deviceId';
 import { Phone, Mail } from './Icons';
 
 const API_URL = process.env.REACT_APP_API_URL || '';
@@ -43,7 +44,16 @@ function Login({ setUser }) {
     setLoading(true);
     setError('');
     try {
-      const res = await axios.post(`${API_URL}/api/login`, formData, { withCredentials: true });
+      const res = await axios.post(`${API_URL}/api/login`, { ...formData, deviceId: getDeviceId() }, { withCredentials: true });
+      if (res.data.otpRequired) {
+        // New device: confirm with the code sent to the account's phone.
+        setMode('phone');
+        setPhone(res.data.phone);
+        setStage('code');
+        setInfo(res.data.message || `New device detected — enter the code we sent to ${res.data.phoneMasked || 'your phone'}.`);
+        setLoading(false);
+        return;
+      }
       finishLogin(res.data);
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed. Please try again.');
@@ -77,7 +87,7 @@ function Login({ setUser }) {
     e.preventDefault();
     setLoading(true); setError('');
     try {
-      const res = await axios.post(`${API_URL}/api/phone/verify`, { phone, code });
+      const res = await axios.post(`${API_URL}/api/phone/verify`, { phone, code, deviceId: getDeviceId() });
       finishLogin(res.data);
     } catch (err) {
       setError(err.response?.data?.error || 'Verification failed');
