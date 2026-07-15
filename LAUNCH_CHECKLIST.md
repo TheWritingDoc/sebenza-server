@@ -28,7 +28,10 @@ Legend: **P0** = do not launch without · **P1** = before real money / any scale
   session → /login. Verified in build.
 - [x] **DONE (ec850af)** Safe localStorage parse on boot (App.js `safeParse`, Chat.js).
 - [x] **DONE** `npm audit fix` → 0 vulnerabilities (was 5 high). Verified.
-- [ ] **⚠️ REQUIRED — set provider creds in Render before launch** (code side is DONE:
+- [x] **SMS DONE (2026-07-15)** — Twilio live: +19206206684 (pay-as-you-go, SA geo
+  enabled), creds in Render, verified END-TO-END (real OTP delivered to a ZA number,
+  code verified, phoneVerified granted). Phone login works in production.
+- [ ] **⚠️ REQUIRED — email creds still pending** (code side is DONE:
   SA numbers auto-convert to E.164 for Twilio; `/api/health` now reports
   `providers: {sms, email}` so you can confirm the config took). Steps:
   1. **SMS**: twilio.com → get SID + Auth Token + buy a number → set
