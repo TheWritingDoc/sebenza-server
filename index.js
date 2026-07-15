@@ -278,7 +278,7 @@ function authUserPayload(user) {
 // Register with validation
 app.post('/api/register', authLimiter, [
   body('name').trim().isLength({ min: 2, max: 100 }).withMessage('Name must be 2-100 characters'),
-  body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
+  body('email').isEmail().normalizeEmail({ gmail_remove_dots: false }).withMessage('Valid email required'),
   body('password').isLength({ min: 6 }).withMessage('Password must be at least 6 characters'),
   body('phone').optional().customSanitizer(v => String(v || '').replace(/[\s\-().]/g, ''))
     .custom(v => v === '' || /^\+?\d{9,15}$/.test(v)).withMessage('Valid phone number required')
@@ -359,7 +359,7 @@ app.post('/api/register', authLimiter, [
 
 // Login with validation
 app.post('/api/login', authLimiter, [
-  body('email').isEmail().normalizeEmail().withMessage('Valid email required'),
+  body('email').isEmail().normalizeEmail({ gmail_remove_dots: false }).withMessage('Valid email required'),
   body('password').isLength({ min: 1 }).withMessage('Password required')
 ], async (req, res) => {
   try {
