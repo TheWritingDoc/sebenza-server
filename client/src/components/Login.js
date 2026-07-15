@@ -8,7 +8,11 @@ const API_URL = process.env.REACT_APP_API_URL || '';
 function Login({ setUser }) {
   const [mode, setMode] = useState('phone'); // 'phone' | 'email' — phone is the low-barrier default
   const [formData, setFormData] = useState({ email: '', password: '' });
-  const [error, setError] = useState('');
+  const [error, setError] = useState(() =>
+    new URLSearchParams(window.location.search).get('signedout') === 'device'
+      ? 'You were signed out because this account logged in on another device. Sebenza allows one device at a time.'
+      : ''
+  );
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   // Phone flow

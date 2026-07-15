@@ -47,8 +47,9 @@ axios.interceptors.response.use(
         localStorage.removeItem('sebenza_user');
       } catch (e) { /* ignore */ }
       const here = window.location.pathname;
+      const revoked = error?.response?.data?.error === 'Session revoked';
       if (here !== '/login' && here !== '/' && here !== '/register') {
-        window.location.assign('/login');
+        window.location.assign(revoked ? '/login?signedout=device' : '/login');
       } else {
         redirecting = false;
       }
