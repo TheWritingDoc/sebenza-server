@@ -352,6 +352,20 @@ function Home() {
         </div>
       </section>
 
+      {/* Android app download — direct APK while the Play Store listing is pending */}
+      <section style={{ textAlign: 'center', padding: '8px 16px 4px' }}>
+        <a href="https://sebenza-server.onrender.com/downloads/sebenza.apk" download="sebenza.apk" style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8, padding: '12px 24px', minHeight: 44,
+          borderRadius: 999, background: '#0f172a', color: 'white', fontWeight: 800, fontSize: 14,
+          textDecoration: 'none', boxShadow: '0 4px 16px rgba(15,23,42,0.25)',
+        }}>
+          🤖 Download the Android app (beta)
+        </a>
+        <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 8 }}>
+          Direct install (APK) · allow "unknown apps" when prompted · Play Store coming soon
+        </div>
+      </section>
+
       <footer style={{ textAlign: 'center', padding: '20px 16px 32px', color: '#94a3b8', fontSize: 13 }}>
         <Link to="/privacy" style={{ color: '#64748b', textDecoration: 'none', margin: '0 10px' }}>Privacy Policy</Link>
         ·

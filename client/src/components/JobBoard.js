@@ -41,9 +41,14 @@ function getDistanceKm(lat1, lng1, lat2, lng2) {
 }
 
 function formatElapsed(ms) {
+  if (!isFinite(ms) || ms < 0) ms = 0;
   const totalSec = Math.floor(ms / 1000);
-  const min = Math.floor(totalSec / 60);
+  const days = Math.floor(totalSec / 86400);
+  const hours = Math.floor((totalSec % 86400) / 3600);
+  const min = Math.floor((totalSec % 3600) / 60);
   const sec = totalSec % 60;
+  if (days > 0) return `${days}d ${hours}h ${min}m`;
+  if (hours > 0) return `${hours}h ${min.toString().padStart(2, '0')}m`;
   return `${min}m ${sec.toString().padStart(2, '0')}s`;
 }
 // Fallback refresh function

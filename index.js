@@ -125,6 +125,15 @@ const apiLimiter = rateLimit({
 // Trust the Render proxy so req.ip and X-Forwarded-For are accurate.
 app.set('trust proxy', 1);
 
+// Direct APK download (beta distribution until the Play Store listing is live).
+app.use('/downloads', express.static(path.join(__dirname, 'downloads'), {
+  setHeaders: (res, filePath) => {
+    if (filePath.endsWith('.apk')) {
+      res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+    }
+  }
+}));
+
 // Structured JSON request logs with request IDs (pino). Health-check and
 // static-asset noise is filtered; auth headers are redacted.
 const { logger, httpLogger } = require('./utils/logger');
