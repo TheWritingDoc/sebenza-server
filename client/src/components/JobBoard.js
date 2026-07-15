@@ -1336,15 +1336,9 @@ function JobBoard({ user, onViewPortfolio }) {
   // payment. If this user hasn't rated yet, route them to the rating card
   // instead of the payment QR.
   const openPaymentQR = (job) => {
-    const iAmPoster = isPosterForJob(job);
-    const iHaveRated = iAmPoster ? job.posterReviewed : job.providerReviewed;
-    if (!iHaveRated) {
-      setViewingJob(job);
-      setWorkHubOpen(true);
-      setWorkHubTab('complete');
-      showMsg(`⭐ Rate the ${iAmPoster ? 'helper' : 'job provider'} first — then confirm payment.`);
-      return;
-    }
+    // Ratings moved AFTER payment — no gate here anymore. (The old
+    // rate-first check deadlocked the flow: the rating card is hidden
+    // until completed, so the payment QR could never open.)
     setPaymentHandshakeJob(job);
   };
 
@@ -1585,6 +1579,11 @@ function JobBoard({ user, onViewPortfolio }) {
       setWorkHubTab('complete');
       if (canCurrentUserConfirm) {
         openConfirmCompletion(job);
+      }
+      // Payment step: surface the QR immediately on both devices — users
+      // were left staring at the hub waiting for it to appear.
+      if (job.status === 'pending_payment') {
+        setPaymentHandshakeJob(prev => (prev && prev._id === job._id) ? prev : job);
       }
       return;
     }
