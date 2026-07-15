@@ -63,4 +63,19 @@ const auth = async (req, res, next) => {
   next();
 };
 
-module.exports = { auth, revokeUserSessions, invalidateVersionCache, currentTokenVersion };
+/**
+ * Single-device policy: bump the version and return the NEW value. Sign the
+ * fresh login's JWT with it — every other device's token dies within the
+ * cache TTL (~60s).
+ */
+async function startExclusiveSession(userId) {
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data: { tokenVersion: { increment: 1 } },
+    select: { tokenVersion: true },
+  });
+  invalidateVersionCache(userId);
+  return user.tokenVersion;
+}
+
+module.exports = { auth, revokeUserSessions, invalidateVersionCache, currentTokenVersion, startExclusiveSession };

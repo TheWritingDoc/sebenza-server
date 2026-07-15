@@ -237,7 +237,7 @@ app.use(`${API_VERSION}/notifications`, notificationRoutes);
 app.use(`${API_VERSION}/admin`, adminRoutes);
 
 // JWT auth (shared, with token-version revocation)
-const { auth, currentTokenVersion } = require('./middleware/authToken');
+const { auth, currentTokenVersion, startExclusiveSession } = require('./middleware/authToken');
 
 // Helper: generate unique referral code
 function generateReferralCode(name) {
@@ -401,7 +401,9 @@ app.post('/api/login', authLimiter, [
       data: { lastLoginAt: new Date(), loginAttempts: 0 }
     });
 
-    const token = jwt.sign({ userId: user.id, tv: user.tokenVersion || 0 }, effectiveJwtSecret, { expiresIn: '30d' });
+    // One device at a time: this login becomes the only valid session.
+    const tv = await startExclusiveSession(user.id);
+    const token = jwt.sign({ userId: user.id, tv }, effectiveJwtSecret, { expiresIn: '30d' });
     res.json({ token, user: authUserPayload(user) });
   } catch (err) {
     console.error('Login error:', err);
@@ -528,7 +530,9 @@ app.post('/api/phone/verify', authLimiter, async (req, res) => {
       await refreshTrust(prisma, user.id);
     } catch (e) { console.error('Trust refresh (phone login) failed:', e.message); }
 
-    const token = jwt.sign({ userId: user.id, tv: user.tokenVersion || 0 }, effectiveJwtSecret, { expiresIn: '30d' });
+    // One device at a time: this login becomes the only valid session.
+    const tv = await startExclusiveSession(user.id);
+    const token = jwt.sign({ userId: user.id, tv }, effectiveJwtSecret, { expiresIn: '30d' });
     res.json({ token, user: authUserPayload(fresh) });
   } catch (err) {
     console.error('Phone verify error:', err);

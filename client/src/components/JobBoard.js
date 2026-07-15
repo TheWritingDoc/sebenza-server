@@ -44,12 +44,10 @@ function formatElapsed(ms) {
   if (!isFinite(ms) || ms < 0) ms = 0;
   const totalSec = Math.floor(ms / 1000);
   const days = Math.floor(totalSec / 86400);
-  const hours = Math.floor((totalSec % 86400) / 3600);
-  const min = Math.floor((totalSec % 3600) / 60);
-  const sec = totalSec % 60;
-  if (days > 0) return `${days}d ${hours}h ${min}m`;
-  if (hours > 0) return `${hours}h ${min.toString().padStart(2, '0')}m`;
-  return `${min}m ${sec.toString().padStart(2, '0')}s`;
+  const hh = String(Math.floor((totalSec % 86400) / 3600)).padStart(2, '0');
+  const mm = String(Math.floor((totalSec % 3600) / 60)).padStart(2, '0');
+  const ss = String(totalSec % 60).padStart(2, '0');
+  return `${days > 0 ? days + 'd ' : ''}${hh}:${mm}:${ss}`;
 }
 // Fallback refresh function
 const forceRefresh = async () => {
@@ -1522,6 +1520,15 @@ function JobBoard({ user, onViewPortfolio }) {
     setConfirmingJob(job);
     setConfirmPhotos([]);
   };
+
+  // Ticks every second while the Work Hub shows a running job so the
+  // hh:mm:ss SESSION TIME clock counts live instead of only on refetches.
+  const [, setClockTick] = useState(0);
+  useEffect(() => {
+    if (!workHubOpen || viewingJob?.status !== 'in_progress') return;
+    const t = setInterval(() => setClockTick(x => x + 1), 1000);
+    return () => clearInterval(t);
+  }, [workHubOpen, viewingJob?.status]);
 
   const lastAutoRouteRef = useRef({ key: '', at: 0 });
   function autoRouteWorkHub(job, eventType = '') {
