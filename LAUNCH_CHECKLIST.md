@@ -31,19 +31,11 @@ Legend: **P0** = do not launch without · **P1** = before real money / any scale
 - [x] **SMS DONE (2026-07-15)** — Twilio live: +19206206684 (pay-as-you-go, SA geo
   enabled), creds in Render, verified END-TO-END (real OTP delivered to a ZA number,
   code verified, phoneVerified granted). Phone login works in production.
-- [ ] **⚠️ REQUIRED — email creds still pending** (code side is DONE:
-  SA numbers auto-convert to E.164 for Twilio; `/api/health` now reports
-  `providers: {sms, email}` so you can confirm the config took). Steps:
-  1. **SMS**: twilio.com → get SID + Auth Token + buy a number → set
-     `TWILIO_SID`, `TWILIO_TOKEN`, `TWILIO_PHONE` (e.g. `+27...`) in Render → Environment.
-  2. **Email** (pick one): SendGrid → `SENDGRID_API_KEY` + `EMAIL_FROM`;
-     or Gmail → enable 2FA, create an App Password, set `EMAIL_HOST=smtp.gmail.com`,
-     `EMAIL_USER=<gmail>`, `EMAIL_PASS=<app password>`, `EMAIL_FROM`.
-  3. Redeploy, then check `https://sebenza-server.onrender.com/api/health` shows
-     `"providers":{"sms":true,"email":true}`.
-  Until set, phone signup + email codes return 503 in prod (by design — the OTP gate).
-  Email+password login still works. Confirm `JWT_SECRET` strong, `NODE_ENV=production`,
-  `CORS_ORIGINS` locked.
+- [x] **EMAIL DONE (2026-07-15)** — Gmail SMTP live (app password in Render), verified
+  END-TO-END: real verification email delivered, code accepted, email identity star
+  granted (stars 1.5, score 28). Both providers now live: `providers:{sms,email}=true`.
+  Bonus fix shipped: login/register `normalizeEmail` was stripping Gmail dots —
+  dotted-Gmail accounts could register but never log in (fixed, deployed).
 
 ## P0 — Legal / store (cannot ship without)
 
