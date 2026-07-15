@@ -14,9 +14,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Trigger sweep
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
         run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "CRON_SECRET secret not configured yet — skipping (set it in repo secrets AND Render env)."
+            exit 0
+          fi
           code=$(curl -s -o /tmp/body -w "%{http_code}" -X POST \
-            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            -H "x-cron-secret: $CRON_SECRET" \
             --max-time 120 \
             https://sebenza-server.onrender.com/api/internal/sweep)
           echo "HTTP $code: $(cat /tmp/body)"
