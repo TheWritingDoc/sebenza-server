@@ -450,8 +450,36 @@ router.get('/:id', async (req, res) => {
 });
 
 // ─── POST /api/jobs — Create job ───
+
+// Rating is mandatory: a user with an unrated completed job cannot start
+// (post or apply for) a new one. Returns the oldest offending job or null.
+async function findUnratedCompletedJob(userId) {
+  return prisma.job.findFirst({
+    where: {
+      status: 'completed',
+      OR: [
+        { posterId: userId, posterReviewed: false },
+        {
+          providerReviewed: false,
+          applications: { some: { applicantId: userId, status: 'approved' } }
+        },
+      ],
+    },
+    orderBy: { completedAt: 'asc' },
+    select: { id: true, title: true },
+  });
+}
+
 router.post('/', auth, createJobLimiter, upload.array('images', 10), async (req, res) => {
   try {
+    const unrated = await findUnratedCompletedJob(req.userId);
+    if (unrated) {
+      return res.status(403).json({
+        error: `Please rate your last job ("${unrated.title}") before posting a new one.`,
+        code: 'RATING_REQUIRED',
+        jobId: unrated.id,
+      });
+    }
     const { title, description, category, budget, budgetMin, budgetMax, isUrgent, lat, lng, scheduledDate, proposedTime, timeIsNegotiable, applicationDeadline, estimatedDuration, tags, paymentMethod, publishAt } = req.body;
 
     let latVal = lat !== undefined ? lat : req.body.location?.lat;
@@ -567,6 +595,14 @@ router.post('/', auth, createJobLimiter, upload.array('images', 10), async (req,
 router.post('/:id/apply', auth, applyLimiter, async (req, res) => {
   try {
     if (!isId(req.params.id)) return res.status(404).json({ error: 'Job not found' });
+    const unrated = await findUnratedCompletedJob(req.userId);
+    if (unrated) {
+      return res.status(403).json({
+        error: `Please rate your last job ("${unrated.title}") before taking a new one.`,
+        code: 'RATING_REQUIRED',
+        jobId: unrated.id,
+      });
+    }
     const { proposedAmount, proposedTime, message, quoteType, quoteFee } = req.body;
     const job = await prisma.job.findUnique({ where: { id: req.params.id } });
     if (!job) return res.status(404).json({ error: 'Job not found' });

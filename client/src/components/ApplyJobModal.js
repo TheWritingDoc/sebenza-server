@@ -62,6 +62,12 @@ function ApplyJobModal({ job, onClose, onApplied }) {
       );
       onApplied();
     } catch (err) {
+      if (err.response?.data?.code === 'RATING_REQUIRED' && err.response.data.jobId) {
+        setError(err.response.data.error);
+        setTimeout(() => window.location.assign(`/jobs/workhub/${err.response.data.jobId}`), 1800);
+        setLoading(false);
+        return;
+      }
       const errMsg = err.response?.data?.error || 'Failed to apply';
       const errCode = err.response?.data?.code;
       if (errCode === 'TOKEN_EXPIRED' || errMsg === 'Token expired' || errCode === 'TOKEN_INVALID' || errMsg === 'Invalid token') {

@@ -302,6 +302,12 @@ function PostJobModal({ user, onClose, onPosted }) {
       }
     } catch (err) {
       console.error('Post job error:', err);
+      if (err.response?.data?.code === 'RATING_REQUIRED' && err.response.data.jobId) {
+        setError(err.response.data.error);
+        setTimeout(() => window.location.assign(`/jobs/workhub/${err.response.data.jobId}`), 1800);
+        setLoading(false);
+        return;
+      }
       const errorMsg = err.response?.data?.error || err.response?.data?.details || err.message || 'Failed to post job';
       setError(err.response?.data?.details ? `${err.response.data.error}: ${err.response.data.details}` : errorMsg);
     }
