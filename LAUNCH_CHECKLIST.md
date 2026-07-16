@@ -77,13 +77,11 @@ Legend: **P0** = do not launch without · **P1** = before real money / any scale
   image (renamed HTML/exe → 400), output is clean JPEG, EXIF/GPS stripped, auto-rotated,
   capped 2000px. Polyglot payloads destroyed (verified: appended `<script>` gone).
   Dead disk-based `processImages.js` removed.
-- [x] **DONE (code)** Error tracking + structured logging. Sentry wired
-  (instrument.js, express error handler, crash handlers) — activates when
-  `SENTRY_DSN` is set, no code change; boot log prints "Sentry error tracking: ON".
-  Pino JSON request logs with request IDs (honours incoming `X-Request-Id`),
-  auth headers redacted, health/static noise filtered, 4xx→warn 5xx→error.
-  **Owner: create a free project at sentry.io (Node/Express) and set `SENTRY_DSN`
-  in Render.** Optional: `LOG_LEVEL` (default info).
+- [x] **DONE + LIVE (2026-07-16)** Error tracking + structured logging. Sentry project
+  `sebenza-server` (org precision-code-pty-ltd), SENTRY_DSN set in Render, capture
+  VERIFIED end-to-end (deliberate test error -> SEBENZA-SERVER-1 in Issues with request
+  context). Pino JSON request logs with request IDs. Test endpoint:
+  GET /api/internal/sentry-test (CRON_SECRET-guarded).
 - [x] **DONE** Prisma migrations baseline. `prisma/migrations/0_init` captures the live
   DB exactly (15 tables, 29 indexes, 29 FKs), marked applied via `migrate resolve`.
   `schema.prisma` aligned to the DB (index/FK names, `onUpdate: NoAction`, DECIMAL types,
@@ -139,9 +137,9 @@ Legend: **P0** = do not launch without · **P1** = before real money / any scale
   socket auth included, `POST /api/admin/users/:id/revoke-sessions`. Verified: revoked
   token → 401 "Session revoked". Migration `add_token_version`.
 - [x] **DONE** External sweep trigger: `POST /api/internal/sweep` (CRON_SECRET-guarded)
-  + GH Actions cron every 15 min (also wakes the sleeping free instance). **Owner: set
-  `CRON_SECRET` on Render + as a GitHub repo secret** — until then the workflow no-ops
-  and the in-process 15-min interval still covers awake time.
+  + GH Actions cron every 15 min (also wakes the sleeping free instance).
+  **LIVE (2026-07-16):** CRON_SECRET set on Render + GitHub; sweep endpoint returns
+  {"ok":true} and the workflow runs green.
 - [ ] Consider Render Starter (no cold starts) once there's traffic.
 - [ ] Split the 4,761-line `JobBoard.js` monolith (maintenance/chunk-size hazard).
 - [x] **DONE** Report-user flow + admin review screen. `POST /users/:id/report`
