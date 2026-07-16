@@ -1214,6 +1214,15 @@ async function sweepExpiredJobs() {
     console.error('Job sweep error:', err.message);
   }
 }
+// Deliberate-error endpoint to verify Sentry capture (CRON_SECRET-guarded).
+app.get('/api/internal/sentry-test', (req, res, next) => {
+  const secret = process.env.CRON_SECRET;
+  if (!secret || req.headers['x-cron-secret'] !== secret) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  next(new Error('Sentry verification error — safe to ignore, triggered intentionally'));
+});
+
 const sweepTimer = setTimeout(sweepExpiredJobs, 30 * 1000);
 const sweepInterval = setInterval(sweepExpiredJobs, 15 * 60 * 1000);
 
